@@ -1,7 +1,0 @@
-{
-  "version": 2,
-  "routes": [
-    { "src": "/api/relay", "dest": "/api/relay" },
-    { "src": "/(.*)", "dest": "/public/$1" }
-  ]
-}
