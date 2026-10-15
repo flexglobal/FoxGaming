@@ -1,0 +1,8 @@
+{
+  "name": "mono-messenger-signaling",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal WebRTC signaling for Mono Messenger; no chat messages or files stored",
+  "engines": {"node": ">=20"},
+  "scripts": {"start": "node dev-server.cjs"}
+}
