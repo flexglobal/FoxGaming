@@ -1,0 +1,8 @@
+{
+  "name": "mono-messenger-temporary-relay",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Short-lived messaging relay for Mono Browser",
+  "engines": {"node": ">=20"},
+  "scripts": {"start": "node dev-server.cjs", "test": "node tests/relay-test.cjs"}
+}
