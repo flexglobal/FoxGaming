@@ -4,7 +4,7 @@
 const {randomUUID,createHash} = require('node:crypto');
 const ID = /^MONO-[A-F0-9]{20}$/;
 const MESSAGE_ID = /^[a-zA-Z0-9_-]{10,80}$/;
-const ALLOWED = new Set(['text','hello','group-text','group-invite','group-joined','blob','blob-chunk','receipt','friend-request','friend-response','game']);
+const ALLOWED = new Set(['text','hello','group-text','group-invite','group-joined','blob','blob-chunk','receipt','friend-request','friend-response','game','watch']);
 const TTL = 300;
 const AUTH_TTL = 86400;
 const MAX_BODY = 260000;
@@ -55,6 +55,19 @@ function validatePayload(body){
   if(t==='text'||t==='group-text')return typeof body.text==='string'&&body.text.length<=8000;
   if(t==='hello'||t==='friend-request')return !!body.profile&&typeof body.profile.nick==='string'&&body.profile.nick.length<=64;
   if(t==='friend-response')return typeof body.accepted==='boolean';
+  if(t==='watch'){
+    const p=body.payload;
+    if(!p||typeof p!=='object'||Array.isArray(p)||JSON.stringify(p).length>2400)return false;
+    if(!/^WT-[A-F0-9]{20}$/.test(p.room||''))return false;
+    if(!['invite','accept','decline','ready','state','control','buffer','leave','request-state'].includes(p.action))return false;
+    if(p.url!==undefined && (typeof p.url!=='string'||p.url.length>1600||!/^https:\/\//i.test(p.url)))return false;
+    if(p.kind!==undefined&&!['youtube','video'].includes(p.kind))return false;
+    if(p.position!==undefined&&(!Number.isFinite(p.position)||p.position<0||p.position>864000))return false;
+    if(p.at!==undefined&&(!Number.isSafeInteger(p.at)||p.at<0))return false;
+    if(p.seq!==undefined&&(!Number.isSafeInteger(p.seq)||p.seq<0))return false;
+    if(p.paused!==undefined&&typeof p.paused!=='boolean')return false;
+    return true;
+  }
   if(t==='game')return ['chess','tic'].includes(body.game)&&body.payload&&typeof body.payload==='object'&&JSON.stringify(body.payload).length<=8192;
   if(t==='blob')return Number.isSafeInteger(body.size)&&body.size>=0&&body.size<=150*1024*1024&&typeof body.key==='string';
   if(t==='blob-chunk')return typeof body.key==='string'&&Number.isSafeInteger(body.index)&&body.index>=0&&typeof body.data==='string'&&body.data.length<=190000&&/^[A-Za-z0-9+/]*={0,2}$/.test(body.data);
