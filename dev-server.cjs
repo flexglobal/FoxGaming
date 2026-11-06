@@ -2,7 +2,7 @@
 // Local development: PORT=8787 node dev-server.cjs. Requires Upstash vars for real signaling.
 const http=require('node:http'),fs=require('node:fs'),path=require('node:path');
 const {URL}=require('node:url');
-const handlers={'/api/signal':require('./api/signal'),'/api/health':require('./api/health'),'/api/news':require('./api/news'),'/api/messages':require('./api/messages'),'/api/profile':require('./api/profile'),'/api/chess':require('./api/chess'),'/api/google':require('./api/google'),'/api/google/callback':require('./api/google/callback')};
+const handlers={'/api/signal':require('./api/signal'),'/api/health':require('./api/health'),'/api/news':require('./api/news'),'/api/messages':require('./api/messages'),'/api/profile':require('./api/profile'),'/api/chess':require('./api/chess'),'/api/channels':require('./api/channels'),'/api/game-activity':require('./api/game-activity'),'/api/admin':require('./api/admin'),'/api/google':require('./api/google'),'/api/google/callback':require('./api/google/callback')};
 const port=Number(process.env.PORT||8787);
 http.createServer((req,res)=>{
   const url=new URL(req.url,'http://localhost');

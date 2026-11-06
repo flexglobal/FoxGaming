@@ -1,6 +1,7 @@
 'use strict';
 // Public, opt-in Mono Messenger profiles. No private chat history stored here.
-const {createHash}=require('node:crypto');
+const {authenticate}=require('../lib/auth');
+const {verifiedBadges}=require('../lib/badges');
 const ID=/^MONO-[A-F0-9]{20}$/;
 const USERNAME=/^[a-z0-9_]{3,32}$/;
 const KEY=id=>'mono:public-profile:v1:'+id;
@@ -25,7 +26,8 @@ function validate(input){
  const langs=(Array.isArray(input.languages)?input.languages:[]).slice(0,5).map(x=>clean(x,22)).filter(Boolean);
  return {username,nick:clean(input.nick,64)||'Пользователь Mono',bio:clean(input.bio,400),avatar:image(input.avatar,120000),cover:image(input.cover,190000),country:country(input.country),languages:langs,links,achievements:(Array.isArray(input.achievements)?input.achievements:[]).filter(id=>badges.has(id)).slice(0,17)};
 }
-async function authorized(req,id){const token=req.headers?.['x-mono-token'];if(typeof token!=='string'||token.length<24||token.length>256)return false;const digest=createHash('sha256').update(token).digest('hex');const found=await cmd('GET','mono:r3:auth:'+id);return !!found&&found===digest}
+const authorized=(req,id)=>authenticate(req,id);
+const activity=async id=>{try{const raw=await cmd('GET','mono:activity:v1:'+id);return raw?JSON.parse(raw):null}catch(_){return null}};
 module.exports=async(req,res)=>{
  for(const [k,v] of Object.entries(HDR))res.setHeader(k,v);
  if(req.method==='OPTIONS')return res.status(204).end();
@@ -42,11 +44,16 @@ module.exports=async(req,res)=>{
      const chessCountry=await cmd('HGET','mono:chess:v1:countries',id);
      if(/^[A-Z]{2}$/.test(chessCountry||'')){
        if(profile)profile.country=chessCountry;
-       else return res.status(200).json({ok:true,id,profile:{country:chessCountry,achievements:[]}});
+       else{
+         // Профиль не публиковался, но медали/игра всё равно принадлежат аккаунту.
+         return res.status(200).json({ok:true,id,profile:{country:chessCountry,achievements:[]},verifiedBadges:await verifiedBadges(id),gameActivity:await activity(id)});
+       }
      }
    }
    if(!profile)return res.status(404).json({error:'Profile not found'});
-   return res.status(200).json({ok:true,id,profile});
+   // Медали и активность — ОТДЕЛЬНЫЕ поля ответа, считаются на сервере. Из редактируемого профиля они игнорируются.
+   for(const k of ['specialBadges','verifiedBadges','gameActivity','roles','isStaff','chessElo','chessRank'])delete profile[k];
+   return res.status(200).json({ok:true,id,profile,verifiedBadges:await verifiedBadges(id),gameActivity:await activity(id)});
   }
   if(req.method!=='POST')return res.status(405).json({error:'Method not allowed'});
   const b=typeof req.body==='string'?JSON.parse(req.body):req.body;

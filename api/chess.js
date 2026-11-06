@@ -22,19 +22,10 @@ const json=async n=>{const v=await command('GET',key(n));return v?JSON.parse(v):
 const save=async (n,v,seconds=172800)=>command('SET',key(n),JSON.stringify(v),'EX',seconds);
 const reply=(res,status,value)=>res.status(status).json(value);
 const clean=id=>String(id||'').trim().toUpperCase();
-async function auth(req,id){
- const token=req.headers?.['x-mono-token'];if(typeof token!=='string'||token.length<24||token.length>256)return false;
- const digest=crypto.createHash('sha256').update(token).digest('hex');
- const recorded=await command('GET','mono:r3:auth:'+id);
- if(recorded!==digest)return false;
- // Identity ownership is pinned permanently in Chess, even when the short-
- // lived Messenger auth expires. Prevents rebinding known ELO identities.
- const permanent=key('owner:'+id);
- const owner=await command('GET',permanent);
- if(owner)return owner===digest;
- await command('SET',permanent,digest,'NX');
- return await command('GET',permanent)===digest;
-}
+// Единая проверка (lib/auth): закрепляет владельца Mono ID навсегда и САМА создаёт сессию, если ключ мессенджера
+// истёк. Раньше после 24 ч без мессенджера шахматы отвечали «Проверка Mono ID не пройдена».
+const {authenticate}=require('../lib/auth');
+const auth=(req,id)=>authenticate(req,id);
 async function lock(name,task){
   const lk=key('lock:'+name),token=crypto.randomBytes(12).toString('hex');
   if(await command('SET',lk,token,'NX','PX',30000)!=='OK')return {busy:true};

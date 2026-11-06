@@ -42,8 +42,15 @@ async function authorized(req,id){
   const key='mono:r3:auth:'+id;
   const old=await cmd('GET',key);
   if(old)return old===digest;
+  // Ключ сессии истёк (24 ч без Mono). Если ID уже закреплён за другой установкой, перехватить его нельзя.
+  const owner=await cmd('GET','mono:acct:v1:owner:'+id)||await cmd('GET','mono:chess:v1:owner:'+id);
+  if(owner&&owner!==digest)return false;
   const created=await cmd('SET',key,digest,'NX','EX',AUTH_TTL);
-  if(created==='OK')return true;
+  if(created==='OK'){
+    // Первое появление ID: закрепляем владельца и дату регистрации (для медалей «N лет в Mono»).
+    if(!owner)await batch([['SET','mono:acct:v1:owner:'+id,digest,'NX'],['HSETNX','mono:acct:v1:created',id,String(Date.now())]]);
+    return true;
+  }
   return await cmd('GET',key)===digest;
 }
 
