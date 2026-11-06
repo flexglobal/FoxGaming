@@ -5,7 +5,7 @@ const {randomUUID,createHash} = require('node:crypto');
 const ID = /^MONO-[A-F0-9]{20}$/;
 const MESSAGE_ID = /^[a-zA-Z0-9_-]{10,80}$/;
 const ALLOWED = new Set(['text','hello','group-text','group-invite','group-joined','blob','blob-chunk','receipt','friend-request','friend-response','game','watch']);
-const TTL = 300;
+const TTL = 600;
 const AUTH_TTL = 86400;
 const MAX_BODY = 260000;
 const HEADERS = {
@@ -109,28 +109,50 @@ module.exports=async function handler(req,res){
       // One Redis command to check auth AND fetch queued messages. No Redis
       // reads at all occur when the browser is closed; the client schedules its
       // own low-frequency fallback when no realtime signaling provider exists.
+      // ONE request does everything a tick needs: auth check, heartbeat (online flag),
+      // queued messages and the friends' presence flags. Before, the client used up to
+      // three separate requests (ping + poll + presence-batch) -> a big saving of the
+      // monthly request quota.
+      const hb=Math.max(0,Math.min(400,parseInt(String(req.query?.hb||'0'),10)||0));
+      const peers=String(req.query?.peers||'').split(',').map(asString).filter(x=>ID.test(x)&&x!==id).slice(0,30);
       const script=`
         if redis.call('GET', KEYS[1]) ~= ARGV[1] then return {0} end
+        local hb=tonumber(ARGV[2])
+        if hb and hb>0 then
+          redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
+          redis.call('SET', 'mono:r3:online:'..string.sub(KEYS[1],14), '1', 'EX', hb)
+        end
         local ids=redis.call('ZRANGE', KEYS[2], 0, 11)
         local out={1}
+        local n=0
         for _,mid in ipairs(ids) do
           local raw=redis.call('HGET',KEYS[3],mid)
-          if raw then table.insert(out,raw) end
+          if raw then table.insert(out,raw) n=n+1 end
+        end
+        out[2+n]='|'
+        for i=4,#KEYS do
+          local on=redis.call('EXISTS',KEYS[i])
+          table.insert(out,on)
         end
         return out
       `;
-      let results=await cmd('EVAL',script,3,'mono:r3:auth:'+id,idx(id),dataKey(id),digest);
+      const keys=['mono:r3:auth:'+id,idx(id),dataKey(id),...peers.map(x=>'mono:r3:online:'+x)];
+      const run=()=>cmd('EVAL',script,keys.length,...keys,digest,String(hb),String(AUTH_TTL));
+      let results=await run();
       if(!Array.isArray(results)||Number(results[0])!==1){
         // First run registration follows exactly the old authorization rules.
         if(!(await authorized(req,id)))return response(res,403,{error:'Wrong installation key'});
-        results=await cmd('EVAL',script,3,'mono:r3:auth:'+id,idx(id),dataKey(id),digest);
+        results=await run();
       }
       if(!Array.isArray(results)||Number(results[0])!==1)return response(res,403,{error:'Wrong installation key'});
-      const messages=[];
-      for(const raw of results.slice(1)){
+      const messages=[];const sep=results.indexOf('|');
+      const rawMessages=sep>0?results.slice(1,sep):results.slice(1);
+      for(const raw of rawMessages){
         try{const envelope=JSON.parse(raw);if(envelope?.id)messages.push(envelope)}catch(_){}
       }
-      return response(res,200,{ok:true,messages});
+      const out={ok:true,messages};
+      if(peers.length&&sep>0){out.peers=Object.fromEntries(peers.map((peer,i)=>[peer,Number(results[sep+1+i])===1]))}
+      return response(res,200,out);
     }
     if(req.method!=='POST')return response(res,405,{error:'Method not allowed'});
     let body=req.body;

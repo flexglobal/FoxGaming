@@ -16,7 +16,7 @@ function invoke(handler,{method='POST',body=null,query={},headers={}}){
   process.env.UPSTASH_REDIS_REST_URL='http://127.0.0.1:'+proxy.port;process.env.UPSTASH_REDIS_REST_TOKEN='test-token';
   process.env.MONO_ADMIN_TOKEN='admin-token-'+hex(30);
   await proxy.run(['FLUSHALL']);
-  const messages=require('../api/messages'),profile=require('../api/profile'),chess=require('../api/chess'),channels=require('../api/channels'),activity=require('../api/game-activity'),admin=require('../api/admin');
+  const messages=require('../api/messages'),profile=require('../api/profile'),chess=require('../api/chess'),channels=require('../api/channels'),activity=require('../api/game-activity'),admin=require('../api/admin'),wallet=require('../api/wallet');
   const C=require('../lib/chess-engine');
   const H=u=>({'x-mono-token':u.token});
   const as=(h,u,body,method='POST',query={})=>invoke(h,{method,body:{id:u.id,...body},query,headers:H(u)});
@@ -28,6 +28,17 @@ function invoke(handler,{method='POST',body=null,query={},headers={}}){
     const r=await invoke(messages,{body:{action:'ping',id:alice.id},headers:H(alice)});assert.equal(r.code,200);
     assert.equal(await proxy.run(['GET','mono:acct:v1:owner:'+alice.id]).then(x=>typeof x),'string');
     assert.ok(Number(await proxy.run(['HGET','mono:acct:v1:created',alice.id]))>0);
+  });
+  await t('poll: heartbeat + статусы друзей + сообщения одним запросом',async()=>{
+    await invoke(messages,{body:{action:'ping',id:bob.id},headers:H(bob)});
+    const send=await invoke(messages,{body:{action:'send',from:bob.id,to:alice.id,payload:{type:'text',text:'привет'}},headers:H(bob)});assert.equal(send.code,202);
+    const r=await invoke(messages,{method:'GET',query:{action:'poll',id:alice.id,hb:'200',peers:bob.id+','+eve.id},headers:H(alice)});
+    assert.equal(r.code,200);assert.equal(r.body.messages.length,1);assert.equal(r.body.messages[0].payload.text,'привет');
+    assert.equal(r.body.peers[bob.id],true);assert.equal(r.body.peers[eve.id],false);
+    assert.ok(await proxy.run(['GET','mono:r3:online:'+alice.id]));
+    const ttl=await proxy.run(['TTL','mono:r3:online:'+alice.id]);assert.ok(ttl>150&&ttl<=200,'ttl '+ttl);
+    const bad=await invoke(messages,{method:'GET',query:{action:'poll',id:alice.id},headers:H(eve)});assert.equal(bad.code,403);
+    const plain=await invoke(messages,{method:'GET',query:{action:'poll',id:alice.id},headers:H(alice)});assert.equal(plain.code,200);assert.equal(plain.body.peers,undefined);
   });
   await t('после истечения сессии чужой токен НЕ может занять ID (угон)',async()=>{
     await proxy.run(['DEL','mono:r3:auth:'+alice.id]);
@@ -244,6 +255,71 @@ function invoke(handler,{method='POST',body=null,query={},headers={}}){
     const matched=rs.filter(r=>r.body.match);const ids=new Set(matched.map(r=>r.body.match.id));
     assert.ok(matched.length>=2,'нашли минимум пару');
     for(const id of ids){const players=matched.filter(r=>r.body.match.id===id).length;assert.equal(players,2,'каждая партия ровно с двумя игроками')}
+  });
+
+  // ---------- Кошелёк и подарки ----------
+  const W=(u,body,ip='1.1.1.1')=>invoke(wallet,{body:{id:u.id,...body},headers:{...H(u),'x-forwarded-for':ip}});
+  const kk=()=>hex(24);
+  const wa=mkUser(),wb=mkUser(),wc=mkUser();
+  await W(wa,{action:'state'});await W(wb,{action:'state'});
+  for(const u of [wa,wb])await proxy.run(['HSET','mono:acct:v1:created',u.id,String(Date.now()-120000)]);
+  await t('кошелёк: чужой токен и неверные данные — отказ',async()=>{
+    assert.equal((await invoke(wallet,{body:{id:wa.id,action:'state'},headers:H(wc)})).code,403);
+    assert.equal((await W(wa,{action:'claim-level',level:1})).code,400);          // нет ключа операции
+    assert.equal((await W(wa,{action:'claim-level',level:3,key:kk()})).code,400);  // у 3 уровня рамка, не серебро
+  });
+  await t('награда уровня выдаётся один раз; повтор с тем же ключом и новым ключом не дублирует',async()=>{
+    const k=kk();const r1=await W(wa,{action:'claim-level',level:1,key:k});assert.equal(r1.code,200);assert.equal(r1.body.balance,100);
+    const r2=await W(wa,{action:'claim-level',level:1,key:k});assert.deepEqual(r2.body,r1.body);
+    const r3=await W(wa,{action:'claim-level',level:1,key:kk()});assert.equal(r3.body.error,'already');assert.equal(r3.body.balance,100);
+    assert.equal((await W(wa,{action:'state'})).body.balance,100);
+  });
+  await t('гонка: 25 параллельных запросов на один уровень → ровно одна награда',async()=>{
+    const rs=await Promise.all([...Array(25)].map(()=>W(wa,{action:'claim-level',level:2,key:kk()})));
+    assert.equal(rs.filter(r=>r.body.ok).length,1);
+    const st=(await W(wa,{action:'state'})).body;assert.equal(st.balance,300);assert.deepEqual(st.claimed,[1,2]);
+  });
+  await t('подарок: нет денег — отказ; получатель обязан существовать; себе нельзя',async()=>{
+    assert.equal((await W(wb,{action:'send-gift',to:wa.id,gift:'bear',key:kk()})).code,402);
+    assert.equal((await W(wa,{action:'send-gift',to:'MONO-'+hex(20),gift:'bear',key:kk()})).code,404);
+    assert.equal((await W(wa,{action:'send-gift',to:wa.id,gift:'bear',key:kk()})).code,400);
+    assert.equal((await W(wa,{action:'send-gift',to:wb.id,gift:'free-gift',key:kk()})).code,400);
+    assert.equal((await W(wa,{action:'state'})).body.balance,300);
+  });
+  let giftUid;
+  await t('отправка подарка списывает цену один раз (повтор запроса не списывает), получатель видит его в инвентаре',async()=>{
+    const k=kk();const r1=await W(wa,{action:'send-gift',to:wb.id,gift:'bear',key:k});assert.equal(r1.code,200);assert.equal(r1.body.balance,200);
+    const r2=await W(wa,{action:'send-gift',to:wb.id,gift:'bear',key:k});assert.deepEqual(r2.body,r1.body);
+    giftUid=r1.body.gift.uid;
+    const sb=(await W(wb,{action:'state'})).body;assert.equal(sb.gifts.length,1);assert.equal(sb.gifts[0].uid,giftUid);assert.equal(sb.gifts[0].type,'bear');assert.equal(sb.gifts[0].price,100);assert.equal(sb.gifts[0].from,wa.id);
+    assert.equal((await W(wa,{action:'state'})).body.balance,200);
+  });
+  await t('гонка: 12 параллельных отправок при балансе 200 → ровно две проходят, баланс не уходит в минус',async()=>{
+    const rs=await Promise.all([...Array(12)].map(()=>W(wa,{action:'send-gift',to:wb.id,gift:'cat',key:kk()})));
+    assert.equal(rs.filter(r=>r.body.ok).length,2);
+    assert.equal((await W(wa,{action:'state'})).body.balance,0);
+    assert.equal((await W(wb,{action:'state'})).body.gifts.length,3);
+  });
+  await t('продать раньше 3 дней нельзя; через 3 дня — ровно 70 %, один раз; гонка двойной продажи',async()=>{
+    const early=await W(wb,{action:'sell-gift',uid:giftUid,key:kk()});assert.equal(early.code,425);assert.equal(early.body.code,'early');
+    assert.equal((await W(wa,{action:'sell-gift',uid:giftUid,key:kk()})).code,410);   // не владелец
+    const raw=JSON.parse(await proxy.run(['HGET','mono:wal:v1:inv:'+wb.id,giftUid]));raw.sentAt=Date.now()-3*86400000-1000;
+    await proxy.run(['HSET','mono:wal:v1:inv:'+wb.id,giftUid,JSON.stringify(raw)]);
+    const k=kk();
+    const rs=await Promise.all([W(wb,{action:'sell-gift',uid:giftUid,key:k}),W(wb,{action:'sell-gift',uid:giftUid,key:kk()}),W(wb,{action:'sell-gift',uid:giftUid,key:kk()}),W(wb,{action:'sell-gift',uid:giftUid,key:kk()})]);
+    assert.equal(rs.filter(r=>r.body.ok).length,1);
+    const ok=rs.find(r=>r.body.ok);assert.equal(ok.body.refund,70);assert.equal(ok.body.balance,70);
+    const again=await W(wb,{action:'sell-gift',uid:giftUid,key:k});assert.equal(again.code,rs[0].body.ok?200:410);
+    const sb=(await W(wb,{action:'state'})).body;assert.equal(sb.balance,70);assert.ok(!sb.gifts.some(g=>g.uid===giftUid));assert.ok(sb.gone.includes(giftUid));
+    assert.ok((await W(wa,{action:'state'})).body.gone.includes(giftUid));   // у отправителя подарок тоже «исчез»
+  });
+  await t('лимит наград на IP: после 60 запросов за сутки отказ',async()=>{
+    const u=mkUser();await W(u,{action:'state'});await proxy.run(['HSET','mono:acct:v1:created',u.id,String(Date.now()-120000)]);
+    const ip='9.9.9.'+Math.floor(Math.random()*200);
+    const day=Math.floor(Date.now()/86400000);
+    const key='mono:wal:v1:ip:'+require('node:crypto').createHash('sha256').update('mono-wal|'+ip).digest('hex').slice(0,24)+':'+day;
+    await proxy.run(['SET',key,'60']);
+    assert.equal((await W(u,{action:'claim-level',level:1,key:kk()},ip)).code,429);
   });
   console.log('\nпройдено',passed);proxy.close();
 })().catch(e=>{console.error(e);process.exit(1)});
