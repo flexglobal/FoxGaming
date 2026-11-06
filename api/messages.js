@@ -2,6 +2,8 @@
 /* Mono temporary delivery relay v3. No message database and no durable chat history.
    Envelopes live in Redis for at most 300 seconds, or until acknowledged. */
 const {randomUUID,createHash} = require('node:crypto');
+const banLib = require('../lib/ban');
+const deny = (req,res) => res.status(403).json(req.monoBan ? banLib.payload(req.monoBan) : {error:'Wrong installation key'});
 const ID = /^MONO-[A-F0-9]{20}$/;
 const MESSAGE_ID = /^[a-zA-Z0-9_-]{10,80}$/;
 const ALLOWED = new Set(['text','hello','group-text','group-invite','group-joined','blob','blob-chunk','receipt','friend-request','friend-response','game','watch']);
@@ -43,7 +45,12 @@ async function authorized(req,id){
   const old=await cmd('GET',key);
   if(old)return old===digest;
   // Ключ сессии истёк (24 ч без Mono). Если ID уже закреплён за другой установкой, перехватить его нельзя.
-  const owner=await cmd('GET','mono:acct:v1:owner:'+id)||await cmd('GET','mono:chess:v1:owner:'+id);
+  let owner=await cmd('GET','mono:acct:v1:owner:'+id)||await cmd('GET','mono:chess:v1:owner:'+id);
+  if(owner&&owner.startsWith('banned:')){
+    const rec=await banLib.current(id);
+    if(rec){if(rec.prev&&rec.prev===digest)req.monoBan=rec;return false}
+    owner=await cmd('GET','mono:acct:v1:owner:'+id);
+  }
   if(owner&&owner!==digest)return false;
   const created=await cmd('SET',key,digest,'NX','EX',AUTH_TTL);
   if(created==='OK'){
@@ -95,7 +102,7 @@ module.exports=async function handler(req,res){
         return response(res,200,{ok:true,online});
       }
       if(action==='presence-batch'){
-        if(!(await authorized(req,id)))return response(res,403,{error:'Wrong installation key'});
+        if(!(await authorized(req,id)))return deny(req,res);
         const peers=String(req.query?.peers||'').split(',').map(asString).filter(x=>ID.test(x)&&x!==id).slice(0,30);
         if(!peers.length)return response(res,200,{ok:true,peers:{}});
         // One MGET instead of a separate HTTP+Redis request for every friend.
@@ -104,7 +111,7 @@ module.exports=async function handler(req,res){
       }
       if(action!=='poll')return response(res,400,{error:'Invalid action'});
       const token=req.headers?.['x-mono-token'];
-      if(typeof token!=='string'||token.length<24||token.length>256)return response(res,403,{error:'Wrong installation key'});
+      if(typeof token!=='string'||token.length<24||token.length>256)return deny(req,res);
       const digest=createHash('sha256').update(token).digest('hex');
       // One Redis command to check auth AND fetch queued messages. No Redis
       // reads at all occur when the browser is closed; the client schedules its
@@ -141,10 +148,10 @@ module.exports=async function handler(req,res){
       let results=await run();
       if(!Array.isArray(results)||Number(results[0])!==1){
         // First run registration follows exactly the old authorization rules.
-        if(!(await authorized(req,id)))return response(res,403,{error:'Wrong installation key'});
+        if(!(await authorized(req,id)))return deny(req,res);
         results=await run();
       }
-      if(!Array.isArray(results)||Number(results[0])!==1)return response(res,403,{error:'Wrong installation key'});
+      if(!Array.isArray(results)||Number(results[0])!==1)return deny(req,res);
       const messages=[];const sep=results.indexOf('|');
       const rawMessages=sep>0?results.slice(1,sep):results.slice(1);
       for(const raw of rawMessages){
@@ -162,21 +169,21 @@ module.exports=async function handler(req,res){
     if(action==='ping'){
       const id=asString(body.id);
       if(!ID.test(id))return response(res,400,{error:'Invalid Mono ID'});
-      if(!(await authorized(req,id)))return response(res,403,{error:'Wrong installation key'});
+      if(!(await authorized(req,id)))return deny(req,res);
       await batch([['EXPIRE','mono:r3:auth:'+id,AUTH_TTL],['SET','mono:r3:online:'+id,'1','EX',130]]);
       return response(res,200,{ok:true});
     }
     if(action==='ack'){
       const id=asString(body.id);
       if(!ID.test(id)||!Array.isArray(body.ids)||body.ids.length>36||!body.ids.every(x=>MESSAGE_ID.test(x)))return response(res,400,{error:'Invalid ACK'});
-      if(!(await authorized(req,id)))return response(res,403,{error:'Wrong installation key'});
+      if(!(await authorized(req,id)))return deny(req,res);
       if(body.ids.length)await batch([['HDEL',dataKey(id),...body.ids],['ZREM',idx(id),...body.ids]]);
       return response(res,200,{ok:true,acknowledged:body.ids.length});
     }
     if(action==='send'){
       const from=asString(body.from),to=asString(body.to);
       if(!ID.test(from)||!ID.test(to)||from===to||!validatePayload(body.payload))return response(res,400,{error:'Invalid message envelope'});
-      if(!(await authorized(req,from)))return response(res,403,{error:'Wrong installation key'});
+      if(!(await authorized(req,from)))return deny(req,res);
       if(body.payload.type==='blob-chunk' && Number(await cmd('ZCARD',idx(to)))>=48){
         res.setHeader('Retry-After','1');
         return response(res,429,{error:'Recipient queue is busy',retryable:true});

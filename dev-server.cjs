@@ -10,7 +10,8 @@ http.createServer((req,res)=>{
     res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
     fs.createReadStream(path.join(__dirname,'index.html')).pipe(res);return;
   }
-  const handler=handlers[url.pathname];if(!handler){res.writeHead(404);res.end('Not found');return}
+  let route=url.pathname;const hidden=/^\/a\/([A-Za-z0-9_-]{1,200})$/.exec(route);if(hidden&&req.method==='GET'){route='/api/admin';url.searchParams.set('page','1');url.searchParams.set('slug',hidden[1])}
+  const handler=handlers[route];if(!handler){res.writeHead(404);res.end('Not found');return}
   const chunks=[];let bytes=0;
   req.on('data',chunk=>{bytes+=chunk.length;if(bytes>300000){req.destroy();return}chunks.push(chunk)});
   req.on('end',async()=>{
@@ -18,7 +19,7 @@ http.createServer((req,res)=>{
     const input=Buffer.concat(chunks).toString('utf8');
     try{req.body=input?JSON.parse(input):null}catch(_){req.body=input}
     res.status=n=>{res.statusCode=n;return res};
-    res.json=data=>{res.setHeader('Content-Type','application/json; charset=utf-8');res.end(JSON.stringify(data))};
+    res.send=body=>res.end(body);res.json=data=>{res.setHeader('Content-Type','application/json; charset=utf-8');res.end(JSON.stringify(data))};
     try{await handler(req,res)}catch(e){console.error(e);res.writeHead(500);res.end(JSON.stringify({error:'Internal error'}))}
   });
 }).listen(port,()=>console.log('Mono Messenger API: http://localhost:'+port));

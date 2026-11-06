@@ -7,7 +7,7 @@ const hex=n=>[...Array(n)].map(()=>'0123456789ABCDEF'[Math.floor(Math.random()*1
 const mkUser=()=>({id:'MONO-'+hex(20),token:hex(40)});
 function invoke(handler,{method='POST',body=null,query={},headers={}}){
   return new Promise((resolve,reject)=>{
-    const res={headers:{},setHeader(k,v){this.headers[k]=v},status(c){this.code=c;return this},json(o){resolve({code:this.code,body:o,headers:this.headers})},end(){resolve({code:this.code,body:null,headers:this.headers})}};
+    const res={headers:{},setHeader(k,v){this.headers[k]=v},status(c){this.code=c;return this},json(o){resolve({code:this.code,body:o,headers:this.headers})},end(b){resolve({code:this.code||this.statusCode,body:b===undefined?null:b,headers:this.headers})}};
     Promise.resolve(handler({method,body,query,headers},res)).catch(reject);
   });
 }
@@ -62,7 +62,7 @@ function invoke(handler,{method='POST',body=null,query={},headers={}}){
   await t('admin: без токена/с чужим токеном — 403; выдача beta/staff/bug_hunter',async()=>{
     assert.equal((await adminReq({action:'grant',id:alice.id,role:'beta'},'x'.repeat(40))).code,403);
     assert.equal((await invoke(admin,{body:{action:'grant',id:alice.id,role:'beta'}})).code,403);
-    assert.equal((await adminReq({action:'grant',id:alice.id,role:'vip'})).code,400);
+    assert.equal((await adminReq({action:'grant',id:alice.id,role:'ultra'})).code,400);
     for(const role of ['beta','staff','bug_hunter'])assert.equal((await adminReq({action:'grant',id:alice.id,role})).code,200);
     const g=await invoke(profile,{method:'GET',query:{id:alice.id}});
     assert.deepEqual(g.body.verifiedBadges.sort(),['beta','bug_hunter','staff']);

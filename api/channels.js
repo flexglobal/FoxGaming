@@ -6,7 +6,7 @@
              delete-comment, update, add-admin, remove-admin, delete. */
 const crypto=require('node:crypto');
 const {cmd,batch}=require('../lib/redis');
-const {authenticate,ID}=require('../lib/auth');
+const {authenticate,denyBody,ID}=require('../lib/auth');
 const HDR={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,X-Mono-Token','Cache-Control':'no-store','Content-Type':'application/json; charset=utf-8','X-Content-Type-Options':'nosniff'};
 const P='mono:chan:v1:';
 const META=c=>P+'c:'+c, POSTS=c=>P+'posts:'+c, POSTH=c=>P+'post:'+c, SUBS=c=>P+'subs:'+c, MY=id=>P+'my:'+id;
@@ -49,7 +49,7 @@ module.exports=async(req,res)=>{
   try{
     let b=req.body;if(typeof b==='string')b=JSON.parse(b);
     const id=String(b?.id||'').trim().toUpperCase(),action=String(b?.action||'');
-    if(!ID.test(id)||!(await authenticate(req,id)))return err(res,403,'Invalid identity');
+    if(!ID.test(id)||!(await authenticate(req,id)))return res.status(403).json(denyBody(req,{error:'Invalid identity'}));
     if(action==='create'){
       const title=clean(b.title,72);if(!title)return err(res,400,'Введи название канала');
       const owned=Number(await cmd('SCARD',MY(id)+':owned'));if(owned>=MAX_OWNED)return err(res,400,'Можно создать не больше '+MAX_OWNED+' каналов');

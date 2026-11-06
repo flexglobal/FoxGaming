@@ -10,7 +10,7 @@
    Действия: state, claim-level {level}, send-gift {to, gift}, sell-gift {uid}. */
 const crypto=require('node:crypto');
 const {cmd}=require('../lib/redis');
-const {authenticate,ID,OWNER,CREATED}=require('../lib/auth');
+const {authenticate,denyBody,ID,OWNER,CREATED}=require('../lib/auth');
 const {GIFTS,LEVEL_SILVER,SELL_HOLD_MS,SELL_PERCENT}=require('../lib/gifts');
 const HDR={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,X-Mono-Token','Cache-Control':'no-store','Content-Type':'application/json; charset=utf-8','X-Content-Type-Options':'nosniff'};
 const P='mono:wal:v1:';
@@ -91,7 +91,7 @@ module.exports=async function handler(req,res){
     if(!body||typeof body!=='object')return err(res,400,'Invalid JSON object');
     const id=String(body.id||''),action=String(body.action||'');
     if(!ID.test(id))return err(res,400,'Invalid Mono ID');
-    if(!(await authenticate(req,id)))return err(res,403,'Wrong installation key');
+    if(!(await authenticate(req,id)))return res.status(403).json(denyBody(req,{error:'Wrong installation key'}));
     if(action==='state')return res.status(200).json({ok:true,...(await stateOf(id))});
     const key=String(body.key||'');
     if(!KEY.test(key))return err(res,400,'Нужен ключ операции (key)');

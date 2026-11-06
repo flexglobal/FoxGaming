@@ -1,6 +1,6 @@
 'use strict';
 // Public, opt-in Mono Messenger profiles. No private chat history stored here.
-const {authenticate}=require('../lib/auth');
+const {authenticate,denyBody}=require('../lib/auth');
 const {verifiedBadges}=require('../lib/badges');
 const ID=/^MONO-[A-F0-9]{20}$/;
 const USERNAME=/^[a-z0-9_]{3,32}$/;
@@ -58,7 +58,7 @@ module.exports=async(req,res)=>{
   if(req.method!=='POST')return res.status(405).json({error:'Method not allowed'});
   const b=typeof req.body==='string'?JSON.parse(req.body):req.body;
   const id=clean(b?.id,26).toUpperCase();if(!ID.test(id))return res.status(400).json({error:'Invalid Mono ID'});
-  if(!(await authorized(req,id)))return res.status(403).json({error:'Invalid identity'});
+  if(!(await authorized(req,id)))return res.status(403).json(denyBody(req,{error:'Invalid identity'}));
   const profile=validate(b.profile);if(!profile)return res.status(400).json({error:'Invalid profile'});
   if(profile.country==='unknown'){
    const chessCountry=await cmd('HGET','mono:chess:v1:countries',id);

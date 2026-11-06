@@ -24,7 +24,7 @@ const reply=(res,status,value)=>res.status(status).json(value);
 const clean=id=>String(id||'').trim().toUpperCase();
 // Единая проверка (lib/auth): закрепляет владельца Mono ID навсегда и САМА создаёт сессию, если ключ мессенджера
 // истёк. Раньше после 24 ч без мессенджера шахматы отвечали «Проверка Mono ID не пройдена».
-const {authenticate}=require('../lib/auth');
+const {authenticate,denyBody}=require('../lib/auth');
 const auth=(req,id)=>authenticate(req,id);
 async function lock(name,task){
   const lk=key('lock:'+name),token=crypto.randomBytes(12).toString('hex');
@@ -103,7 +103,7 @@ module.exports=async(req,res)=>{
   if(req.method!=='POST')return reply(res,405,{error:'Method not allowed'});
   try{
     const b=req.body||{};const id=clean(b.id),action=String(b.action||'');
-    if(!ID.test(id)||!(await auth(req,id)))return reply(res,403,{error:'Проверка Mono ID не пройдена'});
+    if(!ID.test(id)||!(await auth(req,id)))return reply(res,403,denyBody(req,{error:'Проверка Mono ID не пройдена'}));
     // Optional, authenticated country preference. User's choice only changes display, not ELO.
     if(action==='set-country'){
       const allowed=new Set(['unknown','KZ','RU','UA','US','CA','DE','FR','GB','NO','PL','NL','CN','IN','BR','AM','AZ','UZ','IT','ES','auto']);

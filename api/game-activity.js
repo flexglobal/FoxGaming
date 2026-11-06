@@ -3,7 +3,7 @@
    POST {monoId, activity:{gameId,details,iconPng,startedAt}|null}, заголовок X-Mono-Token.
    Название берётся из каталога сервера; пути, PID и заголовки окон не принимаются. Статус живёт 12 минут. */
 const {cmd}=require('../lib/redis');
-const {authenticate,ID}=require('../lib/auth');
+const {authenticate,denyBody,ID}=require('../lib/auth');
 const {GAMES,isGame}=require('../lib/game-catalog');
 const HDR={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,X-Mono-Token','Cache-Control':'no-store','Content-Type':'application/json; charset=utf-8','X-Content-Type-Options':'nosniff'};
 const KEY=id=>'mono:activity:v1:'+id;
@@ -28,7 +28,7 @@ module.exports=async(req,res)=>{
   try{
     let b=req.body;if(typeof b==='string')b=JSON.parse(b);
     const id=String(b?.monoId||'').trim().toUpperCase();
-    if(!ID.test(id)||!(await authenticate(req,id)))return res.status(403).json({error:'Invalid identity'});
+    if(!ID.test(id)||!(await authenticate(req,id)))return res.status(403).json(denyBody(req,{error:'Invalid identity'}));
     if(b.activity===null||b.activity===undefined){await cmd('DEL',KEY(id));return res.status(200).json({ok:true,activity:null})}
     const game=normalize(b.activity);
     if(!game)return res.status(400).json({error:'Unknown game'});
