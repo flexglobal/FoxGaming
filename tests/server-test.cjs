@@ -321,5 +321,18 @@ function invoke(handler,{method='POST',body=null,query={},headers={}}){
     await proxy.run(['SET',key,'60']);
     assert.equal((await W(u,{action:'claim-level',level:1,key:kk()},ip)).code,429);
   });
+  await t('совместный просмотр: rtc offer/answer до 12 КБ принимаются, мусор и большие пакеты — нет',async()=>{
+    const a=mkUser(),b=mkUser();for(const u of [a,b])await invoke(messages,{body:{action:'ping',id:u.id},headers:H(u)});
+    const room='WT-'+'A'.repeat(20),sdp='v=0\r\n'+'a=candidate:1 1 udp 2122260223 192.0.2.1 54400 typ host\r\n'.repeat(80);
+    const w=payload=>invoke(messages,{body:{action:'send',from:a.id,to:b.id,payload:{type:'watch',payload}},headers:H(a)}).then(r=>r.code);
+    assert.equal(await w({action:'rtc',room,rtcType:'offer',sdp,seq:1,at:Date.now()}),202);
+    assert.equal(await w({action:'rtc',room,rtcType:'answer',sdp:sdp.slice(0,3000)}),202);
+    assert.equal(await w({action:'rtc',room,rtcType:'hack',sdp}),400);
+    assert.equal(await w({action:'rtc',room,rtcType:'offer',sdp:'x'.repeat(100)}),400);
+    assert.equal(await w({action:'rtc',room,rtcType:'offer',sdp:'v=0'+'x'.repeat(13000)}),400);
+    assert.equal(await w({action:'control',room,position:5,paused:false,rate:1.5}),202);
+    assert.equal(await w({action:'control',room,position:5,paused:false,rate:9}),400);
+    assert.equal(await w({action:'state',room,position:5,note:'x'.repeat(3000)}),400);
+  });
   console.log('\nпройдено',passed);proxy.close();
 })().catch(e=>{console.error(e);process.exit(1)});

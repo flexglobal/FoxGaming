@@ -71,9 +71,15 @@ function validatePayload(body){
   if(t==='friend-response')return typeof body.accepted==='boolean';
   if(t==='watch'){
     const p=body.payload;
-    if(!p||typeof p!=='object'||Array.isArray(p)||JSON.stringify(p).length>2400)return false;
+    if(!p||typeof p!=='object'||Array.isArray(p))return false;
     if(!/^WT-[A-F0-9]{20}$/.test(p.room||''))return false;
-    if(!['invite','accept','decline','ready','state','control','buffer','leave','request-state'].includes(p.action))return false;
+    if(!['invite','accept','decline','ready','state','control','buffer','leave','request-state','rtc'].includes(p.action))return false;
+    // rtc: одноразовое WebRTC-«рукопожатие» (offer/answer со всеми ICE-кандидатами) для прямого канала синхронизации между двумя зрителями.
+    if(p.action==='rtc'){
+      if(!['offer','answer'].includes(p.rtcType)||typeof p.sdp!=='string'||p.sdp.length<20||p.sdp.length>12000||!p.sdp.startsWith('v=0'))return false;
+      if(JSON.stringify(p).length>12600)return false;
+    }else if(JSON.stringify(p).length>2400)return false;
+    if(p.rate!==undefined&&(typeof p.rate!=='number'||!(p.rate>=0.25&&p.rate<=2)))return false;
     if(p.url!==undefined && (typeof p.url!=='string'||p.url.length>1600||!/^https:\/\//i.test(p.url)))return false;
     if(p.kind!==undefined&&!['youtube','video'].includes(p.kind))return false;
     if(p.position!==undefined&&(!Number.isFinite(p.position)||p.position<0||p.position>864000))return false;
