@@ -8,7 +8,9 @@ const crypto = require('node:crypto');
 const { batch } = require('../lib/redis');
 const health = require('../lib/health');
 
-const GATEWAY = 'https://ai-gateway.vercel.sh/v1/chat/completions';
+/* По умолчанию — Vercel AI Gateway. Можно подключить любой OpenAI-совместимый сервис:
+   AI_BASE_URL (…/chat/completions) + AI_API_KEY + AI_MODELS (например, Groq или Google AI Studio). */
+const GATEWAY = process.env.AI_BASE_URL || 'https://ai-gateway.vercel.sh/v1/chat/completions';
 const MODELS = String(process.env.AI_MODELS || 'google/gemini-3.1-flash-lite,google/gemini-2.5-flash-lite').split(',').map(s => s.trim()).filter(Boolean);
 const DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT) || 150;
 const IP_HOUR = Number(process.env.AI_IP_HOURLY) || 30;
@@ -40,7 +42,7 @@ const ipHash = req => {
   return crypto.createHash('sha256').update('mono-ai|' + raw).digest('hex').slice(0, 24);
 };
 function gatewayToken(req) {
-  return process.env.AI_GATEWAY_API_KEY || req.headers?.['x-vercel-oidc-token'] || process.env.VERCEL_OIDC_TOKEN || '';
+  return process.env.AI_API_KEY || process.env.AI_GATEWAY_API_KEY || req.headers?.['x-vercel-oidc-token'] || process.env.VERCEL_OIDC_TOKEN || '';
 }
 async function readBody(req) {
   if (req.body && typeof req.body === 'object') return req.body;
@@ -171,7 +173,7 @@ module.exports = async function handler(req, res) {
   } catch (e) {
     if (res.headersSent) { try { res.end(); } catch (_) {} return; }
     const st = e.detail?.status;
-    const code = st === 402 ? 'no-credits' : st === 429 ? 'gateway-busy' : 'gateway';
+    const code = (st === 402 || st === 403) ? 'no-credits' : st === 429 ? 'gateway-busy' : 'gateway';
     return res.status(502).json({ ok: false, code, error: 'Нейросеть сейчас недоступна' });
   }
 };
