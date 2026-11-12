@@ -19,6 +19,8 @@ const MAX_MESSAGES = 14, MAX_CHARS = 4000, MAX_TOTAL = 16000;
 
 const SYSTEM = `Ты — Mono AI, встроенный помощник браузера Mono для Windows.
 Отвечай на языке пользователя (обычно русский), дружелюбно и по делу, обращайся на «ты».
+Представляйся только как Mono AI. Не упоминай названия моделей и компаний-разработчиков ИИ, если об этом прямо не спрашивают.
+Если просят игру, программу, скрипт или сайт — дай полный рабочий код без пропусков и заглушек одним блоком \`\`\`язык (например \`\`\`html). Игры и сайты для браузера — один HTML-файл со встроенными CSS и JavaScript, без внешних библиотек и файлов, с управлением с клавиатуры и счётом, если это уместно. Перед кодом — одна короткая фраза, после кода — 1–3 строки, как запустить (например: «Нажми „Скачать“ и открой файл в браузере»).
 Сначала давай прямой ответ, потом детали. Короткий вопрос — короткий ответ (1–4 предложения); для объяснений, инструкций и кода — структурируй ответ.
 Можно использовать Markdown: **жирный**, списки, заголовки ###, \`код\` и блоки \`\`\`. Таблицы не используй.
 У тебя нет доступа к интернету в реальном времени. Если в сообщении есть раздел «Справка», опирайся на него и не противоречь ему. Свежие новости, цены и события после своих знаний не выдумывай — честно скажи, что можешь ошибаться, и предложи поискать в интернете.
@@ -92,7 +94,7 @@ function systemPrompt(ctx = {}) {
 async function callModel(token, messages, stream, maxTokens) {
   let last = null;
   for (const model of MODELS) {
-    const c = new AbortController(), t = setTimeout(() => c.abort(), 25000);
+    const c = new AbortController(), t = setTimeout(() => c.abort(), 30000);
     try {
       const r = await fetch(GATEWAY, {
         method: 'POST', signal: c.signal,
@@ -168,7 +170,7 @@ module.exports = async function handler(req, res) {
 
   const full = [{ role: 'system', content: systemPrompt(body.context) }, ...messages];
   try {
-    const { r } = await callModel(token, full, true, 1500);
+    const { r } = await callModel(token, full, true, 8000);
     return await pipeStream(r, res);
   } catch (e) {
     if (res.headersSent) { try { res.end(); } catch (_) {} return; }
