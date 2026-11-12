@@ -1,7 +1,7 @@
 'use strict';
 const assert=require('node:assert/strict');
 const api=require('../api/messages');
-const health=require('../api/health');
+const health=require('../lib/health');
 const storage=new Map();
 const sets=new Map();
 const hashes=new Map();

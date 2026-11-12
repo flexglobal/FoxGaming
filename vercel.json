@@ -2,7 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
   "framework": null,
+  "functions": {
+    "api/ai.js": { "maxDuration": 60 }
+  },
   "rewrites": [
-    { "source": "/a/:slug", "destination": "/api/admin?page=1&slug=:slug" }
+    { "source": "/a/:slug", "destination": "/api/admin?page=1&slug=:slug" },
+    { "source": "/api/health", "destination": "/api/ai?health=1" }
   ]
 }
