@@ -178,7 +178,7 @@ OPS.set('user',async({b})=>{
     ['HGET',CREATED,id],['HGET',NICKS,id],['GET',PROFILE(id)],['ZSCORE',RATINGS,id],['ZREVRANK',RATINGS,id],['GET',BAL(id)],['SMEMBERS',ROLES(id)],['HGET',VIP,id],
     ['HGET',banLib.BANS,id],['LRANGE',LED(id),0,14],['HVALS',INV(id)],['HGET',COUNTRIES,id],['EXISTS',ONLINE(id)],['HKEYS',CLAIMED(id)]]);
   const profile=parse(profileRaw)||{};
-  const ban=parse(banRaw);if(ban)delete ban.prev;
+  const ban=parse(banRaw);if(ban){delete ban.prev;ban.devices=(ban.hws||[]).length;delete ban.hws}
   const gifts=(inv||[]).map(parse).filter(Boolean).map(g=>({type:g.type,from:g.from,price:g.price,sentAt:g.sentAt}));
   return {ok:true,id,created:Number(created)||0,nick:nick||profile.nick||'',username:profile.username||'',bio:str(profile.bio,200),country:country||profile.country||'',
     elo:elo===null?null:Number(elo),tier:elo===null?null:rank(Number(elo)),position:pos===null?null:Number(pos)+1,silver:Number(bal)||0,roles:(roles||[]).filter(r=>ALL.has(r)||(r.startsWith('deny:')&&ALL.has(r.slice(5)))),
@@ -188,11 +188,37 @@ OPS.set('user',async({b})=>{
 OPS.set('ban',async({b,s})=>{
   const id=await must(uid(b.id));const reason=str(b.reason,300);const days=b.days===undefined?0:int(b.days,0,3650);
   if(days===null)throw new Fail(400,'Срок: от 0 (навсегда) до 3650 дней');
-  const done=await banLib.ban(id,{reason,until:days?Date.now()+days*86400000:0,by:s.name});
-  await audit(s,'ban',id,{reason,days});
+  const perm=b.perm===true;
+  const done=await banLib.ban(id,{reason,until:days?Date.now()+days*86400000:0,by:s.name,perm});
+  await audit(s,'ban',id,{reason,days,perm});
   return {ok:true,id,already:!done};
 });
 OPS.set('unban',async({b,s})=>{const id=uid(b.id);if(!id)throw new Fail(400,'Неверный Mono ID');const done=await banLib.unban(id);await audit(s,'unban',id,{});return {ok:true,id,wasBanned:done}});
+
+/* Апелляции заблокированных пользователей */
+OPS.set('appeals',async({b})=>{
+  const status=['new','accepted','rejected'].includes(b.status)?b.status:'';
+  const ids=(await cmd('ZREVRANGE',banLib.APPEAL_IDX,0,299))||[];
+  const raws=ids.length?await cmd('HMGET',banLib.APPEALS,...ids):[];
+  let items=(raws||[]).map(parse).filter(Boolean);
+  const counts={new:0,accepted:0,rejected:0};for(const a of items)counts[a.status]=(counts[a.status]||0)+1;
+  if(status)items=items.filter(a=>a.status===status);
+  const who=[...new Set(items.map(a=>a.id))];
+  const [nicks,bans]=who.length?await batch([['HMGET',NICKS,...who],['HMGET',banLib.BANS,...who]]):[[],[]];
+  const nm=Object.fromEntries(who.map((id,i)=>[id,nicks?.[i]||''])),bm=Object.fromEntries(who.map((id,i)=>[id,parse(bans?.[i])]));
+  return {ok:true,counts,items:items.slice(0,150).map(a=>({...a,nick:nm[a.id]||'',stillBanned:!!bm[a.id],perm:!!bm[a.id]?.perm}))};
+});
+OPS.set('appeal-decide',async({b,s})=>{
+  const aid=str(b.aid,64);const decision=b.decision==='accept'?'accepted':b.decision==='reject'?'rejected':'';
+  if(!aid||!decision)throw new Fail(400,'Нужны aid и decision: accept или reject');
+  const a=parse(await cmd('HGET',banLib.APPEALS,aid));if(!a)throw new Fail(404,'Апелляция не найдена');
+  if(a.status!=='new')throw new Fail(409,'Апелляция уже рассмотрена');
+  a.status=decision;a.note=str(b.note,500);a.decidedAt=Date.now();a.decidedBy=s.name;
+  await cmd('HSET',banLib.APPEALS,aid,JSON.stringify(a));
+  if(decision==='accepted')await banLib.unban(a.id);
+  await audit(s,'appeal-'+(decision==='accepted'?'accept':'reject'),a.id,{note:a.note});
+  return {ok:true,status:a.status};
+});
 
 OPS.set('silver',async({b,s})=>{
   const id=await must(uid(b.id));const amount=int(b.amount,-1000000,1000000);

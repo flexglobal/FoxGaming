@@ -4,6 +4,7 @@
 const crypto=require('node:crypto');
 const {authenticate,denyBody,ID}=require('../lib/auth');
 const lib=require('../lib/redis');
+const banLib=require('../lib/ban');
 const KEY='mono:official:news:v2';
 /* Баг-репорты через бота «Mono» в мессенджере (/bug текст). Лимиты проверяет СЕРВЕР: 3 отчёта за 24 часа с аккаунта, до 1000 слов в каждом. */
 const BUG_LIMIT=3,BUG_WINDOW=86400,BUG_MAX_WORDS=1000,BUG_MAX_CHARS=12000,BUG_KEEP=1000;
@@ -37,6 +38,19 @@ async function bugReport(req,res,b){
   if(!Number(out[0])){const wait=Math.max(60,Number(out[2])||BUG_WINDOW);return res.status(429).json({error:'Лимит: '+BUG_LIMIT+' баг-репорта в сутки. Следующий можно отправить примерно через '+Math.ceil(wait/3600)+' ч.',left:0,retryAfter:wait})}
   return res.status(201).json({ok:true,rid,words,left:Math.max(0,BUG_LIMIT-Number(out[1]))});
 }
+/* Блокировки: проверка при запуске браузера и апелляции. Отвечает только владельцу Mono ID (по ключу установки). */
+async function banAction(req,res,b){
+  const id=typeof b.id==='string'?b.id.trim().toUpperCase():'';
+  if(!ID.test(id))return res.status(400).json({error:'Invalid Mono ID'});
+  const ok=await authenticate(req,id);
+  if(b.action==='ban-status'){
+    const out=await banLib.status(req,id,typeof b.hw==='string'?b.hw.toLowerCase():'',ok);
+    if(!out)return res.status(403).json({error:'Wrong installation key'});
+    return res.status(200).json({ok:true,checkedAt:Date.now(),...out});
+  }
+  try{return res.status(201).json({ok:true,...await banLib.appeal(req,id,b.text)})}
+  catch(e){if(e instanceof banLib.AppealError)return res.status(e.status).json({error:e.message,...e.extra});throw e}
+}
 const headers={'Cache-Control':'no-store','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'Authorization,Content-Type,X-Mono-Token','Access-Control-Allow-Methods':'GET,POST,OPTIONS'};
 async function redis(cmd){
   const url=process.env.UPSTASH_REDIS_REST_URL,token=process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -56,6 +70,7 @@ module.exports=async function(req,res){
   if(req.method!=='POST')return res.status(405).json({error:'Method not allowed'});
   let b=req.body;
   if(typeof b==='string'){try{b=JSON.parse(b)}catch(_){return res.status(400).json({error:'Invalid JSON'})}}
+  if(b&&typeof b==='object'&&(b.action==='ban-status'||b.action==='appeal')){try{return await banAction(req,res,b)}catch(e){console.error('[ban]',e.message);return res.status(503).json({error:'Сервис блокировок недоступен'})}}
   if(b&&typeof b==='object'&&b.action==='bug'){try{return await bugReport(req,res,b)}catch(e){console.error('[bug]',e.message);return res.status(503).json({error:'Bug report service unavailable'})}}
   const secret=process.env.MONO_NEWS_ADMIN_TOKEN;
   if(!secret||secret.length<24)return res.status(503).json({error:'News publisher not configured'});

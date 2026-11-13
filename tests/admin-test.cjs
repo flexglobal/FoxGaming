@@ -156,7 +156,7 @@ function invoke(handler,{method='POST',body=null,query={},headers={}}){
     assert.equal((await invoke(messages,{method:'GET',query:{action:'poll',id:bob.id},headers:H(bob)})).code,200);
     assert.equal((await as(wallet,bob,{action:'state'})).code,200);
     assert.equal((await call({op:'ban',id:eve.id,reason:'ещё раз'},s1)).body.already,true);
-    assert.equal((await call({op:'user',id:eve.id},s1)).body.ban.reason,'Спам в чатах');
+    assert.equal((await call({op:'user',id:eve.id},s1)).body.ban.reason,'ещё раз'); // повторный бан обновляет причину
     assert.equal((await call({op:'users',q:eve.id.slice(5)},s1)).body.users[0].banned,true);
     assert.equal((await call({op:'unban',id:eve.id},s1)).code,200);
     assert.equal((await invoke(messages,{method:'GET',query:{action:'poll',id:eve.id},headers:H(eve)})).code,200);
@@ -310,6 +310,63 @@ function invoke(handler,{method='POST',body=null,query={},headers={}}){
     const many=[];for(let i=0;i<1005;i++)many.push(['ZADD','mono:bug:v1:idx',String(1000+i),'r'+String(i).padStart(10,'0')]);
     for(const c of many)await proxy.run(c);await proxy.run(['DEL','mono:bug:v1:cnt:'+bob.id]);
     assert.equal((await bug(bob,'Ещё один')).code,201);assert.ok(Number(await proxy.run(['ZCARD','mono:bug:v1:idx']))<=1000);
+  });
+
+  // ---- экран бана, привязка к устройству, апелляции ----
+  const st=(u,hw)=>invoke(news,{body:{action:'ban-status',id:u.id,hw},headers:H(u)});
+  const ap=(u,text)=>invoke(news,{body:{action:'appeal',id:u.id,text},headers:H(u)});
+  const hwOf=()=>require('node:crypto').randomBytes(32).toString('hex');
+  await t('статус бана: не забанен → banned:false; забанен → дата, причина, срок; чужой токен ничего не узнаёт',async()=>{
+    const u=mkUser(),hw=hwOf();
+    let r=await st(u,hw);assert.equal(r.code,200);assert.equal(r.body.banned,false);
+    assert.equal(await proxy.run(['HGET','mono:acct:v1:hw',u.id]),hw);
+    await call({op:'ban',id:u.id,reason:'Читы',days:3},s1);
+    r=await st(u,hw);assert.equal(r.body.banned,true);assert.equal(r.body.reason,'Читы');assert.ok(r.body.at>0&&r.body.until>Date.now());assert.equal(r.body.appeal.canAppeal,true);assert.equal(r.body.perm,false);
+    r=await invoke(news,{body:{action:'ban-status',id:u.id},headers:H(mkUser())});assert.equal(r.code,403);assert.equal(r.body.reason,undefined);
+    await call({op:'unban',id:u.id},s1);r=await st(u,hw);assert.equal(r.body.banned,false);
+    assert.equal(await proxy.run(['HEXISTS','mono:adm:v1:banhw',hw]),0);
+  });
+  await t('обход бана: новый Mono ID с того же устройства блокируется сам; разбан основного снимает и его',async()=>{
+    const u=mkUser(),hw=hwOf();await st(u,hw);
+    await call({op:'ban',id:u.id,reason:'Оскорбления'},s1);
+    const twin=mkUser();const r=await st(twin,hw);assert.equal(r.body.banned,true);assert.equal(r.body.reason,'Оскорбления');assert.equal(r.body.linked,true);
+    assert.equal((await as(wallet,twin,{action:'state'})).code,403);
+    const other=mkUser();assert.equal((await st(other,hwOf())).body.banned,false);
+    await call({op:'unban',id:u.id},s1);
+    assert.equal((await st(twin,hw)).body.banned,false);assert.equal((await as(wallet,twin,{action:'state'})).code,200);
+  });
+  await t('апелляции: раз в неделю; 3 попытки чаще — бан становится перманентным без апелляций',async()=>{
+    const u=mkUser();await st(u,hwOf());await call({op:'ban',id:u.id,reason:'Флуд'},s1);
+    assert.equal((await ap(u,'коротко')).code,400);
+    let r=await ap(u,'Я больше не буду флудить, простите пожалуйста');assert.equal(r.code,201);assert.equal(r.body.appeal.pending,true);assert.equal(r.body.appeal.canAppeal,false);
+    r=await ap(u,'Ещё раз прошу разбанить меня');assert.equal(r.code,429);
+    r=await ap(u,'Ещё раз прошу разбанить меня');assert.equal(r.code,429);
+    r=await ap(u,'Ещё раз прошу разбанить меня');assert.equal(r.code,403);assert.equal(r.body.info.perm,true);
+    r=await st(u);assert.equal(r.body.perm,true);assert.equal(r.body.permReason,'spam');assert.equal(r.body.appeal.allowed,false);
+    // администратор видит апелляцию; повторный бан администратором не снимает «перманент за спам»
+    const list=await call({op:'appeals',status:'new'},s1);assert.ok(list.body.items.some(a=>a.id===u.id&&a.perm));
+    await call({op:'ban',id:u.id,reason:'Флуд',days:1},s1);assert.equal((await st(u)).body.perm,true);
+    // неделя прошла — обычный бан снова принимает апелляцию
+    const v=mkUser();await st(v,hwOf());await call({op:'ban',id:v.id,reason:'Тест'},s1);
+    assert.equal((await ap(v,'Первая апелляция, прошу разбан')).code,201);
+    const rec=JSON.parse(await proxy.run(['HGET','mono:adm:v1:bans',v.id]));const a1=JSON.parse(await proxy.run(['HGET','mono:adm:v1:appeals',rec.lastAppealId]));
+    a1.status='rejected';await proxy.run(['HSET','mono:adm:v1:appeals',a1.aid,JSON.stringify(a1)]);
+    rec.lastAppealAt=Date.now()-8*86400000;await proxy.run(['HSET','mono:adm:v1:bans',v.id,JSON.stringify(rec)]);
+    assert.equal((await st(v)).body.appeal.canAppeal,true);assert.equal((await ap(v,'Вторая апелляция через неделю')).code,201);
+  });
+  await t('перманент от администрации: апелляции закрыты; принятая апелляция снимает бан, отклонённая видна с ответом',async()=>{
+    const u=mkUser();await st(u,hwOf());await call({op:'ban',id:u.id,reason:'Мошенничество',perm:true},s1);
+    let r=await st(u);assert.equal(r.body.perm,true);assert.equal(r.body.appeal.allowed,false);
+    assert.equal((await ap(u,'Пожалуйста разбаньте меня')).code,403);
+    const v=mkUser();await st(v,hwOf());await call({op:'ban',id:v.id,reason:'Спам'},s1);await ap(v,'Это была ошибка, я не спамил');
+    let list=await call({op:'appeals'},s1);let item=list.body.items.find(a=>a.id===v.id);assert.equal(item.status,'new');assert.equal(item.ban.reason,'Спам');
+    assert.equal((await call({op:'appeal-decide',aid:item.aid,decision:'reject',note:'Есть доказательства'},s1)).code,200);
+    r=await st(v);assert.equal(r.body.appeal.last.status,'rejected');assert.equal(r.body.appeal.last.note,'Есть доказательства');assert.equal(r.body.appeal.canAppeal,false);
+    assert.equal((await call({op:'appeal-decide',aid:item.aid,decision:'accept'},s1)).code,409);
+    const w=mkUser();await st(w,hwOf());await call({op:'ban',id:w.id,reason:'Ошибка'},s1);await ap(w,'Меня забанили по ошибке');
+    item=(await call({op:'appeals',status:'new'},s1)).body.items.find(a=>a.id===w.id);
+    assert.equal((await call({op:'appeal-decide',aid:item.aid,decision:'accept',note:'Извините'},s1)).code,200);
+    assert.equal((await st(w)).body.banned,false);assert.equal((await as(wallet,w,{action:'state'})).code,200);
   });
 
   // ---- журнал ----
