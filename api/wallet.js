@@ -12,10 +12,12 @@ const crypto=require('node:crypto');
 const {cmd}=require('../lib/redis');
 const {authenticate,denyBody,ID,OWNER,CREATED}=require('../lib/auth');
 const {GIFTS,LEVEL_SILVER,SELL_HOLD_MS,SELL_PERCENT}=require('../lib/gifts');
+const {SHOP_ITEMS,SHOP_DEFAULT_EQ}=require('../lib/shop');
 const HDR={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,X-Mono-Token','Cache-Control':'no-store','Content-Type':'application/json; charset=utf-8','X-Content-Type-Options':'nosniff'};
 const P='mono:wal:v1:';
 const BAL=id=>P+'bal:'+id, CLAIMED=id=>P+'claimed:'+id, INV=id=>P+'inv:'+id, GONE=id=>P+'gone:'+id, LED=id=>P+'led:'+id;
 const IDEM=(id,k)=>P+'idem:'+id+':'+k, RATE=id=>P+'rate:send:'+id;
+const SHOP_OWN=id=>P+'shop:own:'+id, SHOP_EQ=id=>P+'shop:eq:'+id;
 const KEY=/^[A-Za-z0-9_-]{16,64}$/;
 const MAX_INV=500, SEND_PER_HOUR=60, CLAIMS_PER_IP_DAY=60, MIN_ACCOUNT_AGE_MS=20000, GONE_TTL=30*86400, LED_MAX=100;
 const err=(res,status,error,extra)=>res.status(status).json({error,...extra});
@@ -71,14 +73,30 @@ local res=cjson.encode({ok=true,balance=nb,uid=ARGV[1],refund=refund})
 redis.call('SET',KEYS[1],res,'EX',86400)
 return res`;
 
+/* Покупка в магазине: атомарно проверяет, что предмета ещё нет и хватает серебра. */
+const LUA_SHOP=`
+local prev=redis.call('GET',KEYS[1]); if prev then return prev end
+local bal=tonumber(redis.call('GET',KEYS[2])) or 0
+if redis.call('SISMEMBER',KEYS[3],ARGV[1])==1 then return cjson.encode({ok=false,error='owned',balance=bal}) end
+local price=tonumber(ARGV[2])
+if bal<price then return cjson.encode({ok=false,error='funds',balance=bal}) end
+local nb=redis.call('DECRBY',KEYS[2],price)
+redis.call('SADD',KEYS[3],ARGV[1])
+redis.call('LPUSH',KEYS[4],cjson.encode({t='shop',a=-price,ts=tonumber(ARGV[3]),ref=ARGV[1]}))
+redis.call('LTRIM',KEYS[4],0,tonumber(ARGV[4])-1)
+local res=cjson.encode({ok=true,balance=nb,item=ARGV[1],price=price})
+redis.call('SET',KEYS[1],res,'EX',86400)
+return res`;
 const parse=raw=>{try{return JSON.parse(raw)}catch(_){return null}};
 async function stateOf(id){
-  const [bal,claimed,inv,gone,led]=await Promise.all([
-    cmd('GET',BAL(id)),cmd('HKEYS',CLAIMED(id)),cmd('HGETALL',INV(id)),cmd('HKEYS',GONE(id)),cmd('LRANGE',LED(id),0,19)]);
+  const [bal,claimed,inv,gone,led,own,eqRaw]=await Promise.all([
+    cmd('GET',BAL(id)),cmd('HKEYS',CLAIMED(id)),cmd('HGETALL',INV(id)),cmd('HKEYS',GONE(id)),cmd('LRANGE',LED(id),0,19),cmd('SMEMBERS',SHOP_OWN(id)),cmd('HGETALL',SHOP_EQ(id))]);
   const gifts=[];
   for(let i=0;i+1<(inv||[]).length;i+=2){const g=parse(inv[i+1]);if(g&&g.uid&&GIFTS[g.type])gifts.push({uid:g.uid,type:g.type,from:g.from,price:g.price,sentAt:g.sentAt})}
   gifts.sort((a,b)=>b.sentAt-a.sentAt);
-  return {balance:Number(bal)||0,claimed:(claimed||[]).map(Number).filter(n=>LEVEL_SILVER[n]).sort((a,b)=>a-b),gifts,gone:gone||[],ledger:(led||[]).map(parse).filter(Boolean),now:Date.now(),sellHoldMs:SELL_HOLD_MS,sellPercent:SELL_PERCENT};
+  const owned=[...new Set([...Object.keys(SHOP_ITEMS).filter(k=>!SHOP_ITEMS[k].price),...(own||[]).filter(k=>SHOP_ITEMS[k])])];
+  const eq={...SHOP_DEFAULT_EQ};for(let i=0;i+1<(eqRaw||[]).length;i+=2){const it=SHOP_ITEMS[eqRaw[i+1]];if(it&&it.cat===eqRaw[i]&&owned.includes(eqRaw[i+1]))eq[eqRaw[i]]=eqRaw[i+1]}
+  return {shop:{owned,eq},balance:Number(bal)||0,claimed:(claimed||[]).map(Number).filter(n=>LEVEL_SILVER[n]).sort((a,b)=>a-b),gifts,gone:gone||[],ledger:(led||[]).map(parse).filter(Boolean),now:Date.now(),sellHoldMs:SELL_HOLD_MS,sellPercent:SELL_PERCENT};
 }
 const ipHash=req=>{const raw=String(req.headers?.['x-forwarded-for']||req.headers?.['x-real-ip']||req.socket?.remoteAddress||'').split(',')[0].trim();return crypto.createHash('sha256').update('mono-wal|'+raw).digest('hex').slice(0,24)};
 
@@ -93,6 +111,12 @@ module.exports=async function handler(req,res){
     if(!ID.test(id))return err(res,400,'Invalid Mono ID');
     if(!(await authenticate(req,id)))return res.status(403).json(denyBody(req,{error:'Wrong installation key'}));
     if(action==='state')return res.status(200).json({ok:true,...(await stateOf(id))});
+    if(action==='shop-equip'){
+      const item=String(body.item||'');const it=SHOP_ITEMS[item];if(!it)return err(res,400,'Неизвестный предмет');
+      if(it.price&&!(Number(await cmd('SISMEMBER',SHOP_OWN(id),item))))return err(res,403,'Этот предмет ещё не куплен',{code:'not_owned'});
+      await cmd('HSET',SHOP_EQ(id),it.cat,item);
+      return res.status(200).json({ok:true,item,cat:it.cat});
+    }
     const key=String(body.key||'');
     if(!KEY.test(key))return err(res,400,'Нужен ключ операции (key)');
     const now=Date.now();
@@ -117,6 +141,13 @@ module.exports=async function handler(req,res){
       if(!out)return err(res,500,'Ошибка кошелька');
       const map={funds:402,rate:429,norecipient:404,inventory_full:409};
       return res.status(out.ok?200:(map[out.error]||400)).json(out.ok?out:{...out,error:({funds:'Недостаточно серебряных монет',rate:'Слишком много подарков за час',norecipient:'Получатель ещё не зарегистрирован в Mono',inventory_full:'У получателя переполнен инвентарь'})[out.error]||out.error,code:out.error});
+    }
+    if(action==='shop-buy'){
+      const item=String(body.item||'');const it=SHOP_ITEMS[item];if(!it)return err(res,400,'Неизвестный предмет');
+      if(!it.price)return res.status(200).json({ok:true,item,price:0,balance:Number(await cmd('GET',BAL(id)))||0});
+      const out=parse(await cmd('EVAL',LUA_SHOP,4,IDEM(id,key),BAL(id),SHOP_OWN(id),LED(id),item,String(it.price),String(now),String(LED_MAX)));
+      if(!out)return err(res,500,'Ошибка кошелька');
+      return res.status(out.ok?200:(out.error==='funds'?402:409)).json(out.ok?out:{...out,error:out.error==='funds'?'Недостаточно серебряных монет':'Предмет уже куплен',code:out.error});
     }
     if(action==='sell-gift'){
       const uid=String(body.uid||'');if(!/^[a-f0-9]{24}$/.test(uid))return err(res,400,'Неверный подарок');

@@ -369,6 +369,23 @@ function invoke(handler,{method='POST',body=null,query={},headers={}}){
     assert.equal((await st(w)).body.banned,false);assert.equal((await as(wallet,w,{action:'state'})).code,200);
   });
 
+  // ---- магазин: покупка и надевание проверяются сервером ----
+  await t('магазин: бесплатное есть у всех, покупка списывает серебро один раз, чужое не надеть',async()=>{
+    const u=mkUser();await as(wallet,u,{action:'state'});
+    let st=(await as(wallet,u,{action:'state'})).body.shop;assert.ok(st.owned.includes('theme:dark'));assert.equal(st.eq.theme,'theme:light');
+    assert.equal((await as(wallet,u,{action:'shop-equip',item:'frame:flame'})).code,403);
+    let r=await as(wallet,u,{action:'shop-buy',item:'frame:neon',key:'k-shop-0000000001'});assert.equal(r.code,402);
+    await call({op:'silver',id:u.id,amount:1000},s1);
+    r=await as(wallet,u,{action:'shop-buy',item:'frame:neon',key:'k-shop-0000000002',price:1});assert.equal(r.code,200);assert.equal(r.body.balance,700);
+    r=await as(wallet,u,{action:'shop-buy',item:'frame:neon',key:'k-shop-0000000002'});assert.equal(r.body.balance,700);// повтор с тем же ключом — без второго списания
+    r=await as(wallet,u,{action:'shop-buy',item:'frame:neon',key:'k-shop-0000000003'});assert.equal(r.code,409);
+    assert.equal((await as(wallet,u,{action:'shop-buy',item:'frame:nope',key:'k-shop-0000000004'})).code,400);
+    assert.equal((await as(wallet,u,{action:'shop-equip',item:'frame:neon'})).code,200);
+    assert.equal((await as(wallet,u,{action:'shop-equip',item:'theme:dark'})).code,200);
+    st=(await as(wallet,u,{action:'state'})).body;assert.equal(st.shop.eq.frame,'frame:neon');assert.equal(st.shop.eq.theme,'theme:dark');assert.equal(st.balance,700);
+    assert.ok(st.ledger.some(l=>l.t==='shop'&&l.a===-300&&l.ref==='frame:neon'));
+  });
+
   // ---- журнал ----
   await t('журнал действий: записано кто и что делал, пароли и токены не попадают в журнал',async()=>{
     const a=await call({op:'audit'},s1);assert.equal(a.code,200);
