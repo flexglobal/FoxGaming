@@ -386,10 +386,39 @@ function invoke(handler,{method='POST',body=null,query={},headers={}}){
     assert.ok(st.ledger.some(l=>l.t==='shop'&&l.a===-250&&l.ref==='frame:neon'));
   });
 
+  await t('магазин: администратор меняет цену/валюту/теги, золото начисляется и списывается при покупке',async()=>{
+    const u=mkUser();await as(wallet,u,{action:'state'});
+    let r=await call({op:'shop-list'},s1);assert.equal(r.code,200);assert.ok(r.body.items.find(i=>i.id==='theme:city').price===900);
+    assert.equal((await call({op:'shop-set',item:'theme:light',price:5,cur:'silver',rarity:'rare',tags:[]},s1)).code,400);
+    assert.equal((await call({op:'shop-set',item:'theme:city',price:500,old:400,cur:'gold',rarity:'legend',tags:[]},s1)).code,400);
+    r=await call({op:'shop-set',item:'theme:city',price:50,old:900,cur:'gold',rarity:'epic',tags:['new','sale','bogus']},s1);assert.equal(r.code,200);
+    assert.deepEqual(r.body.item.tags,['new','sale']);assert.equal(r.body.item.cur,'gold');assert.equal(r.body.item.rarity,'epic');
+    let st=(await as(wallet,u,{action:'state'})).body;assert.equal(st.gold,0);assert.equal(st.shop.cfg['theme:city'].price,50);assert.equal(st.shop.cfg['theme:city'].old,900);
+    assert.equal((await as(wallet,u,{action:'shop-buy',item:'theme:city',key:'k-gold-000000001'})).code,402);
+    r=await call({op:'gold',id:u.id,amount:80},s1);assert.equal(r.code,200);assert.equal(r.body.gold,80);
+    assert.equal((await call({op:'user',id:u.id},s1)).body.gold,80);
+    r=await as(wallet,u,{action:'shop-buy',item:'theme:city',key:'k-gold-000000002'});assert.equal(r.code,200);assert.equal(r.body.gold,30);assert.equal(r.body.cur,'gold');
+    st=(await as(wallet,u,{action:'state'})).body;assert.equal(st.gold,30);assert.ok(st.shop.owned.includes('theme:city'));assert.equal(st.balance,0);
+    assert.ok(st.ledger.some(l=>l.t==='shop'&&l.cur==='gold'&&l.a===-50));
+    r=await call({op:'gold',id:u.id,amount:-1000},s1);assert.equal(r.body.gold,0);assert.equal(r.body.clamped,true);
+    assert.equal((await call({op:'shop-set',item:'theme:city',reset:true},s1)).body.item.price,900);
+    assert.equal((await as(wallet,u,{action:'state'})).body.shop.cfg['theme:city'],undefined);
+  });
+  await t('мессенджер: смайлы магазина отправляются только из купленного набора',async()=>{
+    const u=mkUser(),v=mkUser();for(const x of [u,v])await invoke(messages,{body:{action:'ping',id:x.id},headers:H(x)});
+    const send=text=>invoke(messages,{body:{action:'send',from:u.id,to:v.id,payload:{type:'text',text}},headers:H(u)});
+    assert.ok((await send('привет [[emoji:mono-mony/smile.svg]]')).code<300);
+    let r=await send('[[emoji:mono-fox/love.svg]]');assert.equal(r.code,403);assert.equal(r.body.code,'emoji_not_owned');
+    await call({op:'silver',id:u.id,amount:400},s1);
+    assert.equal((await as(wallet,u,{action:'shop-buy',item:'emoji:fox',key:'k-emo-0000000001'})).code,200);
+    assert.ok((await send('[[emoji:mono-fox/love.svg]]')).code<300);
+    assert.equal((await send('[[emoji:mono-neon/love.svg]]')).code,403);
+  });
+
   // ---- журнал ----
   await t('журнал действий: записано кто и что делал, пароли и токены не попадают в журнал',async()=>{
     const a=await call({op:'audit'},s1);assert.equal(a.code,200);
-    const ops=new Set(a.body.items.map(x=>x.op));for(const need of ['login','ban','unban','silver+','silver-','medal-grant','medal-revoke','elo-set','elo-reset-all','elo-restore','announce','announce-delete','bug-status','bug-delete'])assert.ok(ops.has(need),'нет '+need);
+    const ops=new Set(a.body.items.map(x=>x.op));for(const need of ['login','ban','unban','silver+','silver-','gold+','shop','medal-grant','medal-revoke','elo-set','elo-reset-all','elo-restore','announce','announce-delete','bug-status','bug-delete'])assert.ok(ops.has(need),'нет '+need);
     const text=JSON.stringify(a.body);assert.ok(!text.includes(PASS1)&&!text.includes(PASS2)&&!text.includes(s1)&&!text.includes(s2));
     assert.ok(a.body.items.every(x=>x.name==='Первый'||x.name==='Второй'));
     const dump=JSON.stringify(await Promise.all((await proxy.run(['KEYS','*'])).map(async k=>[k,await proxy.run(['TYPE',k]).then(async ty=>ty==='string'?proxy.run(['GET',k]):ty==='list'?proxy.run(['LRANGE',k,0,-1]):ty==='hash'?proxy.run(['HGETALL',k]):ty==='set'?proxy.run(['SMEMBERS',k]):null)])));

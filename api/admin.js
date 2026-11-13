@@ -26,6 +26,8 @@ const NEWS='mono:official:news:v2', BUG_IDX='mono:bug:v1:idx', BUG_HASH='mono:bu
 const RATINGS='mono:chess:v1:ratings', RATINGS_BACKUP='mono:chess:v1:ratings:backup';
 const NICKS='mono:chess:v1:nicknames', COUNTRIES='mono:chess:v1:countries', NAMES='mono:public-profile:v1:usernames';
 const PROFILE=id=>'mono:public-profile:v1:'+id;
+const GOLD=id=>'mono:wal:v1:gold:'+id;
+const shopLib=require('../lib/shop');
 const BAL=id=>'mono:wal:v1:bal:'+id, LED=id=>'mono:wal:v1:led:'+id, INV=id=>'mono:wal:v1:inv:'+id, CLAIMED=id=>'mono:wal:v1:claimed:'+id;
 const ONLINE=id=>'mono:r3:online:'+id;
 const MAX_FAIL_IP=5, MAX_FAIL_ALL=40, LOCK_SEC=900, SESSION_IDLE=7200, SESSION_ABS=12*3600*1000, PAGE_SIZE=40;
@@ -117,7 +119,7 @@ local d=tonumber(ARGV[1])
 if d<0 and bal+d<0 then d=-bal end
 if d==0 then return cjson.encode({balance=bal,delta=0}) end
 local nb=redis.call('INCRBY',KEYS[1],d)
-redis.call('LPUSH',KEYS[2],cjson.encode({t='admin',a=d,ts=tonumber(ARGV[2]),ref=ARGV[3]}))
+redis.call('LPUSH',KEYS[2],cjson.encode({t='admin',a=d,ts=tonumber(ARGV[2]),ref=ARGV[3],cur=ARGV[5]}))
 redis.call('LTRIM',KEYS[2],0,tonumber(ARGV[4])-1)
 return cjson.encode({balance=nb,delta=d})`;
 const LUA_ELO_RESET=`
@@ -174,14 +176,14 @@ OPS.set('users',async({b})=>{
 
 OPS.set('user',async({b})=>{
   const id=await must(uid(b.id));
-  const [created,nick,profileRaw,elo,pos,bal,roles,vip,banRaw,led,inv,country,online,claimed]=await batch([
+  const [created,nick,profileRaw,elo,pos,bal,roles,vip,banRaw,led,inv,country,online,claimed,gold,shopN]=await batch([
     ['HGET',CREATED,id],['HGET',NICKS,id],['GET',PROFILE(id)],['ZSCORE',RATINGS,id],['ZREVRANK',RATINGS,id],['GET',BAL(id)],['SMEMBERS',ROLES(id)],['HGET',VIP,id],
-    ['HGET',banLib.BANS,id],['LRANGE',LED(id),0,14],['HVALS',INV(id)],['HGET',COUNTRIES,id],['EXISTS',ONLINE(id)],['HKEYS',CLAIMED(id)]]);
+    ['HGET',banLib.BANS,id],['LRANGE',LED(id),0,14],['HVALS',INV(id)],['HGET',COUNTRIES,id],['EXISTS',ONLINE(id)],['HKEYS',CLAIMED(id)],['GET',GOLD(id)],['SCARD','mono:wal:v1:shop:own:'+id]]);
   const profile=parse(profileRaw)||{};
   const ban=parse(banRaw);if(ban){delete ban.prev;ban.devices=(ban.hws||[]).length;delete ban.hws}
   const gifts=(inv||[]).map(parse).filter(Boolean).map(g=>({type:g.type,from:g.from,price:g.price,sentAt:g.sentAt}));
   return {ok:true,id,created:Number(created)||0,nick:nick||profile.nick||'',username:profile.username||'',bio:str(profile.bio,200),country:country||profile.country||'',
-    elo:elo===null?null:Number(elo),tier:elo===null?null:rank(Number(elo)),position:pos===null?null:Number(pos)+1,silver:Number(bal)||0,roles:(roles||[]).filter(r=>ALL.has(r)||(r.startsWith('deny:')&&ALL.has(r.slice(5)))),
+    elo:elo===null?null:Number(elo),tier:elo===null?null:rank(Number(elo)),position:pos===null?null:Number(pos)+1,silver:Number(bal)||0,gold:Number(gold)||0,shopItems:Number(shopN)||0,roles:(roles||[]).filter(r=>ALL.has(r)||(r.startsWith('deny:')&&ALL.has(r.slice(5)))),
     vipUntil:vip===null?0:Number(vip),badges:await verifiedBadges(id),ban:ban||null,ledger:(led||[]).map(parse).filter(Boolean),gifts,claimedLevels:(claimed||[]).map(Number).sort((a,c)=>a-c),online:!!online};
 });
 
@@ -227,6 +229,36 @@ OPS.set('silver',async({b,s})=>{
   const out=parse(await cmd('EVAL',LUA_SILVER,2,BAL(id),LED(id),String(amount),String(Date.now()),note,'100'));
   await audit(s,amount>0?'silver+':'silver-',id,{requested:amount,delta:out.delta,balance:out.balance,note});
   return {ok:true,id,balance:out.balance,delta:out.delta,clamped:out.delta!==amount};
+});
+
+OPS.set('gold',async({b,s})=>{
+  const id=await must(uid(b.id));const amount=int(b.amount,-1000000,1000000);
+  if(!amount)throw new Fail(400,'Сумма: целое число от −1 000 000 до 1 000 000, не ноль');
+  const note=str(b.note,60)||(amount>0?'Золото от администрации':'Золото списано администрацией');
+  const out=parse(await cmd('EVAL',LUA_SILVER,2,GOLD(id),LED(id),String(amount),String(Date.now()),note,'100','gold'));
+  await audit(s,amount>0?'gold+':'gold-',id,{requested:amount,delta:out.delta,balance:out.balance,note});
+  return {ok:true,id,gold:out.balance,delta:out.delta,clamped:out.delta!==amount};
+});
+
+/* Магазин: цены, валюта, старая цена, теги, редкость */
+OPS.set('shop-list',async()=>{
+  const cat=await shopLib.shopCatalog();
+  return {ok:true,items:Object.values(cat),rarities:shopLib.SHOP_RARITIES,tags:shopLib.SHOP_TAGS};
+});
+OPS.set('shop-set',async({b,s})=>{
+  const item=str(b.item,40);if(!shopLib.SHOP_ITEMS[item])throw new Fail(400,'Неизвестный предмет');
+  if(shopLib.SHOP_FREE.has(item))throw new Fail(400,'Бесплатный базовый предмет не редактируется');
+  const c={};
+  if(b.reset!==true){
+    const price=int(b.price,1,1000000);if(price===null)throw new Fail(400,'Цена: целое число от 1 до 1 000 000');c.price=price;
+    if(b.old!==undefined&&b.old!==null&&b.old!==''&&b.old!==0){const old=int(b.old,1,1000000);if(old===null||old<=price)throw new Fail(400,'Старая цена должна быть больше новой');c.old=old}
+    if(b.cur!=='gold'&&b.cur!=='silver')throw new Fail(400,'Валюта: silver или gold');c.cur=b.cur;
+    if(!shopLib.SHOP_RARITIES.includes(b.rarity))throw new Fail(400,'Неизвестная редкость');c.rarity=b.rarity;
+    c.tags=Array.isArray(b.tags)?b.tags.filter(t=>shopLib.SHOP_TAGS.includes(t)):[];
+  }
+  const saved=await shopLib.shopSetCfg(item,c);
+  await audit(s,'shop',item,saved||{reset:true});
+  return {ok:true,item:(await shopLib.shopCatalog())[item]};
 });
 
 OPS.set('medal',async({b,s})=>{

@@ -1,6 +1,7 @@
 'use strict';
 /* Mono temporary delivery relay v3. No message database and no durable chat history.
    Envelopes live in Redis for at most 300 seconds, or until acknowledged. */
+const {SHOP_ITEMS}=require('../lib/shop');
 const {randomUUID,createHash} = require('node:crypto');
 const banLib = require('../lib/ban');
 const deny = (req,res) => res.status(403).json(req.monoBan ? banLib.payload(req.monoBan) : {error:'Wrong installation key'});
@@ -190,6 +191,14 @@ module.exports=async function handler(req,res){
       const from=asString(body.from),to=asString(body.to);
       if(!ID.test(from)||!ID.test(to)||from===to||!validatePayload(body.payload))return response(res,400,{error:'Invalid message envelope'});
       if(!(await authorized(req,from)))return deny(req,res);
+      if(body.payload.type==='text'||body.payload.type==='group-text'){
+        // Смайлы из магазина: отправить можно только купленный набор (проверка на сервере, клиенту не доверяем).
+        const packs=new Set();for(const m of body.payload.text.matchAll(/\[\[emoji:mono-([a-z0-9]+)\//g))packs.add('emoji:'+m[1]);
+        for(const item of packs){
+          const it=SHOP_ITEMS[item];if(!it||!it.price)continue;
+          if(!Number(await cmd('SISMEMBER','mono:wal:v1:shop:own:'+from,item)))return response(res,403,{error:'Этот набор смайлов не куплен',code:'emoji_not_owned',item});
+        }
+      }
       if(body.payload.type==='blob-chunk' && Number(await cmd('ZCARD',idx(to)))>=48){
         res.setHeader('Retry-After','1');
         return response(res,429,{error:'Recipient queue is busy',retryable:true});

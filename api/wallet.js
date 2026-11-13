@@ -12,11 +12,12 @@ const crypto=require('node:crypto');
 const {cmd}=require('../lib/redis');
 const {authenticate,denyBody,ID,OWNER,CREATED}=require('../lib/auth');
 const {GIFTS,LEVEL_SILVER,SELL_HOLD_MS,SELL_PERCENT}=require('../lib/gifts');
-const {SHOP_ITEMS,SHOP_DEFAULT_EQ}=require('../lib/shop');
+const {SHOP_ITEMS,SHOP_DEFAULT_EQ,shopCatalog,shopPublic}=require('../lib/shop');
 const HDR={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,X-Mono-Token','Cache-Control':'no-store','Content-Type':'application/json; charset=utf-8','X-Content-Type-Options':'nosniff'};
 const P='mono:wal:v1:';
 const BAL=id=>P+'bal:'+id, CLAIMED=id=>P+'claimed:'+id, INV=id=>P+'inv:'+id, GONE=id=>P+'gone:'+id, LED=id=>P+'led:'+id;
 const IDEM=(id,k)=>P+'idem:'+id+':'+k, RATE=id=>P+'rate:send:'+id;
+const GOLD=id=>P+'gold:'+id;
 const SHOP_OWN=id=>P+'shop:own:'+id, SHOP_EQ=id=>P+'shop:eq:'+id;
 const KEY=/^[A-Za-z0-9_-]{16,64}$/;
 const MAX_INV=500, SEND_PER_HOUR=60, CLAIMS_PER_IP_DAY=60, MIN_ACCOUNT_AGE_MS=20000, GONE_TTL=30*86400, LED_MAX=100;
@@ -82,21 +83,21 @@ local price=tonumber(ARGV[2])
 if bal<price then return cjson.encode({ok=false,error='funds',balance=bal}) end
 local nb=redis.call('DECRBY',KEYS[2],price)
 redis.call('SADD',KEYS[3],ARGV[1])
-redis.call('LPUSH',KEYS[4],cjson.encode({t='shop',a=-price,ts=tonumber(ARGV[3]),ref=ARGV[1]}))
+redis.call('LPUSH',KEYS[4],cjson.encode({t='shop',a=-price,ts=tonumber(ARGV[3]),ref=ARGV[1],cur=ARGV[5]}))
 redis.call('LTRIM',KEYS[4],0,tonumber(ARGV[4])-1)
-local res=cjson.encode({ok=true,balance=nb,item=ARGV[1],price=price})
+local res=cjson.encode({ok=true,balance=nb,cur=ARGV[5],item=ARGV[1],price=price})
 redis.call('SET',KEYS[1],res,'EX',86400)
 return res`;
 const parse=raw=>{try{return JSON.parse(raw)}catch(_){return null}};
 async function stateOf(id){
-  const [bal,claimed,inv,gone,led,own,eqRaw]=await Promise.all([
-    cmd('GET',BAL(id)),cmd('HKEYS',CLAIMED(id)),cmd('HGETALL',INV(id)),cmd('HKEYS',GONE(id)),cmd('LRANGE',LED(id),0,19),cmd('SMEMBERS',SHOP_OWN(id)),cmd('HGETALL',SHOP_EQ(id))]);
+  const [bal,claimed,inv,gone,led,own,eqRaw,gold,cfg]=await Promise.all([
+    cmd('GET',BAL(id)),cmd('HKEYS',CLAIMED(id)),cmd('HGETALL',INV(id)),cmd('HKEYS',GONE(id)),cmd('LRANGE',LED(id),0,19),cmd('SMEMBERS',SHOP_OWN(id)),cmd('HGETALL',SHOP_EQ(id)),cmd('GET',GOLD(id)),shopPublic()]);
   const gifts=[];
   for(let i=0;i+1<(inv||[]).length;i+=2){const g=parse(inv[i+1]);if(g&&g.uid&&GIFTS[g.type])gifts.push({uid:g.uid,type:g.type,from:g.from,price:g.price,sentAt:g.sentAt})}
   gifts.sort((a,b)=>b.sentAt-a.sentAt);
   const owned=[...new Set([...Object.keys(SHOP_ITEMS).filter(k=>!SHOP_ITEMS[k].price),...(own||[]).filter(k=>SHOP_ITEMS[k])])];
   const eq={...SHOP_DEFAULT_EQ};for(let i=0;i+1<(eqRaw||[]).length;i+=2){const it=SHOP_ITEMS[eqRaw[i+1]];if(it&&it.cat===eqRaw[i]&&owned.includes(eqRaw[i+1]))eq[eqRaw[i]]=eqRaw[i+1]}
-  return {shop:{owned,eq},balance:Number(bal)||0,claimed:(claimed||[]).map(Number).filter(n=>LEVEL_SILVER[n]).sort((a,b)=>a-b),gifts,gone:gone||[],ledger:(led||[]).map(parse).filter(Boolean),now:Date.now(),sellHoldMs:SELL_HOLD_MS,sellPercent:SELL_PERCENT};
+  return {shop:{owned,eq,cfg:cfg||{}},balance:Number(bal)||0,gold:Number(gold)||0,claimed:(claimed||[]).map(Number).filter(n=>LEVEL_SILVER[n]).sort((a,b)=>a-b),gifts,gone:gone||[],ledger:(led||[]).map(parse).filter(Boolean),now:Date.now(),sellHoldMs:SELL_HOLD_MS,sellPercent:SELL_PERCENT};
 }
 const ipHash=req=>{const raw=String(req.headers?.['x-forwarded-for']||req.headers?.['x-real-ip']||req.socket?.remoteAddress||'').split(',')[0].trim();return crypto.createHash('sha256').update('mono-wal|'+raw).digest('hex').slice(0,24)};
 
@@ -145,9 +146,11 @@ module.exports=async function handler(req,res){
     if(action==='shop-buy'){
       const item=String(body.item||'');const it=SHOP_ITEMS[item];if(!it)return err(res,400,'Неизвестный предмет');
       if(!it.price)return res.status(200).json({ok:true,item,price:0,balance:Number(await cmd('GET',BAL(id)))||0});
-      const out=parse(await cmd('EVAL',LUA_SHOP,4,IDEM(id,key),BAL(id),SHOP_OWN(id),LED(id),item,String(it.price),String(now),String(LED_MAX)));
+      const c=(await shopCatalog())[item];const gold=c.cur==='gold';
+      const out=parse(await cmd('EVAL',LUA_SHOP,4,IDEM(id,key),gold?GOLD(id):BAL(id),SHOP_OWN(id),LED(id),item,String(c.price),String(now),String(LED_MAX),c.cur));
       if(!out)return err(res,500,'Ошибка кошелька');
-      return res.status(out.ok?200:(out.error==='funds'?402:409)).json(out.ok?out:{...out,error:out.error==='funds'?'Недостаточно серебряных монет':'Предмет уже куплен',code:out.error});
+      if(out.ok){if(gold){out.gold=out.balance;out.balance=Number(await cmd('GET',BAL(id)))||0}else out.gold=Number(await cmd('GET',GOLD(id)))||0}
+      return res.status(out.ok?200:(out.error==='funds'?402:409)).json(out.ok?out:{...out,error:out.error==='funds'?(gold?'Недостаточно золотых монет':'Недостаточно серебряных монет'):'Предмет уже куплен',code:out.error,cur:c.cur});
     }
     if(action==='sell-gift'){
       const uid=String(body.uid||'');if(!/^[a-f0-9]{24}$/.test(uid))return err(res,400,'Неверный подарок');
