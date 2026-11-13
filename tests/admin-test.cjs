@@ -415,6 +415,16 @@ function invoke(handler,{method='POST',body=null,query={},headers={}}){
     assert.equal((await send('[[emoji:mono-neon/love.svg]]')).code,403);
   });
 
+  await t('мессенджер: видно, что надето у собеседника (только купленное)',async()=>{
+    const u=mkUser(),v=mkUser();await as(wallet,u,{action:'state'});await as(wallet,v,{action:'state'});
+    await call({op:'silver',id:v.id,amount:2000},s1);
+    assert.equal((await as(wallet,v,{action:'shop-buy',item:'frame:flame',key:'k-look-0000000001'})).code,200);
+    await as(wallet,v,{action:'shop-equip',item:'frame:flame'});await as(wallet,v,{action:'shop-equip',item:'theme:dark'});
+    await proxy.run(['HSET','mono:wal:v1:shop:eq:'+v.id,'effect','effect:aurora']);// не куплено — не должно показываться
+    const r=await as(wallet,u,{action:'shop-looks',ids:[v.id,'bad',u.id]});assert.equal(r.code,200);
+    assert.deepEqual(r.body.looks[v.id],{frame:'flame',theme:'dark'});assert.deepEqual(r.body.looks[u.id],{});assert.equal(r.body.looks.bad,undefined);
+  });
+
   // ---- журнал ----
   await t('журнал действий: записано кто и что делал, пароли и токены не попадают в журнал',async()=>{
     const a=await call({op:'audit'},s1);assert.equal(a.code,200);

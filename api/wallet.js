@@ -9,7 +9,7 @@
    POST { id, action, key?, ... } → { ok, balance, ... }
    Действия: state, claim-level {level}, send-gift {to, gift}, sell-gift {uid}. */
 const crypto=require('node:crypto');
-const {cmd}=require('../lib/redis');
+const {cmd,batch}=require('../lib/redis');
 const {authenticate,denyBody,ID,OWNER,CREATED}=require('../lib/auth');
 const {GIFTS,LEVEL_SILVER,SELL_HOLD_MS,SELL_PERCENT}=require('../lib/gifts');
 const {SHOP_ITEMS,SHOP_DEFAULT_EQ,shopCatalog,shopPublic}=require('../lib/shop');
@@ -112,6 +112,18 @@ module.exports=async function handler(req,res){
     if(!ID.test(id))return err(res,400,'Invalid Mono ID');
     if(!(await authenticate(req,id)))return res.status(403).json(denyBody(req,{error:'Wrong installation key'}));
     if(action==='state')return res.status(200).json({ok:true,...(await stateOf(id))});
+    if(action==='shop-looks'){
+      // Что надето у собеседников (рамка, эффект, тема) — только реально купленное, проверяет сервер.
+      const ids=[...new Set((Array.isArray(body.ids)?body.ids:[]).map(String).filter(x=>ID.test(x)))].slice(0,60);
+      if(!ids.length)return res.status(200).json({ok:true,looks:{}});
+      const raw=await batch(ids.flatMap(u=>[['HGETALL',SHOP_EQ(u)],['SMEMBERS',SHOP_OWN(u)]]));
+      const looks={};
+      ids.forEach((u,i)=>{const eqRaw=raw[i*2]||[],own=new Set(raw[i*2+1]||[]);const look={};
+        for(let k=0;k+1<eqRaw.length;k+=2){const cat=eqRaw[k],item=eqRaw[k+1],it=SHOP_ITEMS[item];
+          if(it&&it.cat===cat&&['theme','frame','effect'].includes(cat)&&(!it.price||own.has(item)))look[cat]=it.key}
+        looks[u]=look});
+      return res.status(200).json({ok:true,looks});
+    }
     if(action==='shop-equip'){
       const item=String(body.item||'');const it=SHOP_ITEMS[item];if(!it)return err(res,400,'Неизвестный предмет');
       if(it.price&&!(Number(await cmd('SISMEMBER',SHOP_OWN(id),item))))return err(res,403,'Этот предмет ещё не куплен',{code:'not_owned'});
