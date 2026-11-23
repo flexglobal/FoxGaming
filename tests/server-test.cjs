@@ -225,6 +225,13 @@ function invoke(handler,{method='POST',body=null,query={},headers={}}){
     assert.equal((await as(chess,g4.white,{action:'react',matchId:g4.id,emotion:'fire'})).code,400,'антиспам эмоций');
     assert.equal((await as(chess,g4.white,{action:'react',matchId:g4.id,emotion:'<script>'})).code,400);
   });
+  await t('анти-накрутка ELO: ранняя сдача не меняет рейтинг',async()=>{
+    const g=await startRanked();
+    const r=await as(chess,g.black,{action:'resign',matchId:g.id});assert.equal(r.body.match.winner,'w');
+    assert.ok(r.body.match.ratingNote);
+    const elo=async u=>proxy.run(['ZSCORE','mono:chess:v1:ratings',u.id]).then(Number);
+    assert.equal(await elo(g.white),200);assert.equal(await elo(g.black),200);
+  });
   await t('шахматы: партия с другом — создать, принять, сыграть, реванш, отмена',async()=>{
     const a=mkUser(),f=mkUser();
     assert.equal((await as(chess,a,{action:'friend-create',friendId:a.id,seconds:300})).code,400);
@@ -303,7 +310,7 @@ function invoke(handler,{method='POST',body=null,query={},headers={}}){
   await t('продать раньше 3 дней нельзя; через 3 дня — ровно 70 %, один раз; гонка двойной продажи',async()=>{
     const early=await W(wb,{action:'sell-gift',uid:giftUid,key:kk()});assert.equal(early.code,425);assert.equal(early.body.code,'early');
     assert.equal((await W(wa,{action:'sell-gift',uid:giftUid,key:kk()})).code,410);   // не владелец
-    const raw=JSON.parse(await proxy.run(['HGET','mono:wal:v1:inv:'+wb.id,giftUid]));raw.sentAt=Date.now()-3*86400000-1000;
+    const raw=JSON.parse(await proxy.run(['HGET','mono:wal:v1:inv:'+wb.id,giftUid]));raw.sentAt=Date.now()-3*86400000-1000;raw.sa=raw.sentAt-4*86400000;
     await proxy.run(['HSET','mono:wal:v1:inv:'+wb.id,giftUid,JSON.stringify(raw)]);
     const k=kk();
     const rs=await Promise.all([W(wb,{action:'sell-gift',uid:giftUid,key:k}),W(wb,{action:'sell-gift',uid:giftUid,key:kk()}),W(wb,{action:'sell-gift',uid:giftUid,key:kk()}),W(wb,{action:'sell-gift',uid:giftUid,key:kk()})]);
@@ -312,6 +319,27 @@ function invoke(handler,{method='POST',body=null,query={},headers={}}){
     const again=await W(wb,{action:'sell-gift',uid:giftUid,key:k});assert.equal(again.code,rs[0].body.ok?200:410);
     const sb=(await W(wb,{action:'state'})).body;assert.equal(sb.balance,70);assert.ok(!sb.gifts.some(g=>g.uid===giftUid));assert.ok(sb.gone.includes(giftUid));
     assert.ok((await W(wa,{action:'state'})).body.gone.includes(giftUid));   // у отправителя подарок тоже «исчез»
+  });
+  await t('мессенджер: чужое сообщение с тем же id не перезаписывается; ник «Админ» заменяется',async()=>{
+    const a=mkUser(),v=mkUser(),x=mkUser();
+    for(const u of [a,v,x])await invoke(messages,{body:{action:'ping',id:u.id},headers:H(u)});
+    const mid='same-id-'+hex(10);
+    assert.equal((await invoke(messages,{body:{action:'send',id:mid,from:a.id,to:v.id,payload:{type:'text',text:'настоящее'}},headers:H(a)})).code,202);
+    assert.equal((await invoke(messages,{body:{action:'send',id:mid,from:x.id,to:v.id,payload:{type:'text',text:'подмена'}},headers:H(x)})).code,202);
+    await invoke(messages,{body:{action:'send',from:x.id,to:v.id,payload:{type:'friend-request',profile:{nick:'Администрация'}}},headers:H(x)});
+    const r=await invoke(messages,{method:'GET',query:{action:'poll',id:v.id},headers:H(v)});
+    const m=r.body.messages.find(e=>e.id===mid);assert.equal(m.payload.text,'настоящее');assert.equal(m.from,a.id);
+    const fr=r.body.messages.find(e=>e.payload.type==='friend-request');assert.equal(fr.payload.profile.nick,'Пользователь Mono');
+  });
+  await t('анти-ферма: подарок от аккаунта моложе 3 дней не продаётся, но остаётся у получателя',async()=>{
+    const farm=mkUser(),main=mkUser();await W(farm,{action:'state'});await W(main,{action:'state'});
+    await proxy.run(['SET','mono:wal:v1:bal:'+farm.id,'1000']);
+    const s=await W(farm,{action:'send-gift',to:main.id,gift:'bear',key:kk()});assert.equal(s.code,200);
+    const uid=s.body.gift.uid;assert.ok(s.body.gift.sa>0);
+    const raw=JSON.parse(await proxy.run(['HGET','mono:wal:v1:inv:'+main.id,uid]));raw.sentAt=Date.now()-3*86400000-1000;raw.sa=raw.sentAt-3600000;
+    await proxy.run(['HSET','mono:wal:v1:inv:'+main.id,uid,JSON.stringify(raw)]);
+    const r=await W(main,{action:'sell-gift',uid,key:kk()});assert.equal(r.code,403);assert.equal(r.body.code,'young');
+    const st=(await W(main,{action:'state'})).body;assert.equal(st.balance,0);const g=st.gifts.find(x=>x.uid===uid);assert.ok(g);assert.equal(g.sellable,false);
   });
   await t('лимит наград на IP: после 60 запросов за сутки отказ',async()=>{
     const u=mkUser();await W(u,{action:'state'});await proxy.run(['HSET','mono:acct:v1:created',u.id,String(Date.now()-120000)]);

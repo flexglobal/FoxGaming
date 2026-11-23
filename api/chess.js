@@ -9,6 +9,11 @@ const PREFIX='mono:chess:v1:';
 const RATING_KEY=PREFIX+'ratings';
 const pairKey=(a,b)=>PREFIX+'repeat:'+crypto.createHash('sha256').update([a,b].sort().join('|')).digest('hex');
 const QUEUE=PREFIX+'queue';
+/* Анти-накрутка ELO (договорные партии со своими вторыми аккаунтами):
+   • партия, где сделано меньше MIN_RATED_PLIES полуходов, рейтинг не меняет («прервана»);
+   • одна и та же пара игроков меняет рейтинг не больше PAIR_RATED_PER_DAY раз за сутки. */
+const MIN_RATED_PLIES=4, PAIR_RATED_PER_DAY=4;
+const pairDayKey=(a,b)=>PREFIX+'pairday:'+crypto.createHash('sha256').update([a,b].sort().join('|')).digest('hex').slice(0,32);
 const HEADERS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,X-Mono-Token','Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
 const redisURL=()=>String(process.env.UPSTASH_REDIS_REST_URL||'').replace(/\/$/,'');
 const redisToken=()=>String(process.env.UPSTASH_REDIS_REST_TOKEN||'');
@@ -25,6 +30,7 @@ const clean=id=>String(id||'').trim().toUpperCase();
 // Единая проверка (lib/auth): закрепляет владельца Mono ID навсегда и САМА создаёт сессию, если ключ мессенджера
 // истёк. Раньше после 24 ч без мессенджера шахматы отвечали «Проверка Mono ID не пройдена».
 const {authenticate,denyBody}=require('../lib/auth');
+const {safeNick}=require('../lib/nick');
 const auth=(req,id)=>authenticate(req,id);
 async function lock(name,task){
   const lk=key('lock:'+name),token=crypto.randomBytes(12).toString('hex');
@@ -35,7 +41,7 @@ const rank=points=>points<200?'Железо':points<=500?'Бронза':points<=
 function diff(points,win){if(points<200)return win?50:-5;if(points<=900)return win?50:-10;if(points<=1500)return win?50:-15;if(points<=2000)return win?45:-30;if(points<=2750)return win?40:-35;if(points<4000)return win?40:-40;return win?30:-50;}
 async function rating(id){const v=await command('ZSCORE',RATING_KEY,id);return v===null?200:Math.max(0,Math.min(100000,Number(v)));}
 async function ensureRating(id){await command('ZADD',RATING_KEY,'NX',200,id)}
-function view(g,id){const clocks={...(g.clocks||{})};if(g.started&&!g.finished&&g.seconds&&g.state&&g.clockAt){const active=g.state.turn;clocks[active]=Math.max(0,Number(clocks[active]||0)-Math.max(0,Date.now()-g.clockAt));}return {players:g.players||null,id:g.id,mode:g.rated?'ranked':'friend',rated:!!g.rated,white:g.white,black:g.black,side:g.white===id?'w':'b',fen:C.fen(g.state),state:g.state,turn:g.state.turn,seq:g.seq,clocks,drawOffer:g.drawOffer||null,drawNotice:g.drawNotice||null,reaction:g.reaction||null,seconds:g.seconds,clockAt:g.clockAt,started:g.started,finished:g.finished,winner:g.winner,reason:g.reason,votes:g.rematchVotes?.length||0,updatedAt:g.updatedAt};}
+function view(g,id){const clocks={...(g.clocks||{})};if(g.started&&!g.finished&&g.seconds&&g.state&&g.clockAt){const active=g.state.turn;clocks[active]=Math.max(0,Number(clocks[active]||0)-Math.max(0,Date.now()-g.clockAt));}return {players:g.players||null,id:g.id,mode:g.rated?'ranked':'friend',rated:!!g.rated,white:g.white,black:g.black,side:g.white===id?'w':'b',fen:C.fen(g.state),state:g.state,turn:g.state.turn,seq:g.seq,clocks,drawOffer:g.drawOffer||null,drawNotice:g.drawNotice||null,reaction:g.reaction||null,seconds:g.seconds,clockAt:g.clockAt,started:g.started,finished:g.finished,winner:g.winner,reason:g.reason,ratingNote:g.ratingNote||null,votes:g.rematchVotes?.length||0,updatedAt:g.updatedAt};}
 async function publicProfile(id){
   try{
     const [score,name,country]=await Promise.all([
@@ -58,6 +64,19 @@ async function settle(g,reason,winner){
       if redis.call('EXISTS', KEYS[2])==1 then
         return {0,tonumber(redis.call('ZSCORE',KEYS[1],ARGV[1]) or 200),tonumber(redis.call('ZSCORE',KEYS[1],ARGV[2]) or 200)}
       end
+      local cur_w=tonumber(redis.call('ZSCORE',KEYS[1],ARGV[1]) or 200)
+      local cur_b=tonumber(redis.call('ZSCORE',KEYS[1],ARGV[2]) or 200)
+      if tonumber(ARGV[4]) < tonumber(ARGV[5]) then
+        redis.call('SET',KEYS[2],'short','EX',604800)
+        return {0,cur_w,cur_b,'short'}
+      end
+      local pn=tonumber(redis.call('GET',KEYS[3]) or '0')
+      if pn >= tonumber(ARGV[6]) then
+        redis.call('SET',KEYS[2],'pair','EX',604800)
+        return {0,cur_w,cur_b,'pair'}
+      end
+      redis.call('INCR',KEYS[3])
+      if pn==0 then redis.call('EXPIRE',KEYS[3],86400) end
       local function delta(p,win)
         if p < 200 then return win and 50 or -5 end
         if p <= 900 then return win and 50 or -10 end
@@ -75,7 +94,9 @@ async function settle(g,reason,winner){
       redis.call('SET',KEYS[2],'1','EX',604800)
       return {1,nw,nb}
     `;
-    const [applied,nw,nb]=await command('EVAL',L,2,RATING_KEY,key('settled:'+g.id),g.white,g.black,winner);
+    const [applied,nw,nb,why]=await command('EVAL',L,3,RATING_KEY,key('settled:'+g.id),pairDayKey(g.white,g.black),g.white,g.black,winner,String(Number(g.seq)||0),String(MIN_RATED_PLIES),String(PAIR_RATED_PER_DAY));
+    if(why==='short')g.ratingNote='Партия прервана слишком рано — рейтинг не изменён';
+    if(why==='pair')g.ratingNote='Лимит рейтинговых партий с этим соперником на сегодня — рейтинг не изменён';
     // Scores are committed server-side immediately after a win, mate, timeout or resign.
     // Attach the verified values to the match response so the winner sees the new
     // ELO at once; the public top list may stay cached on each client for 30 min.
@@ -118,7 +139,7 @@ module.exports=async(req,res)=>{
     if(action==='set-profile'){
       // Same visible nickname as local Messenger, including Unicode letters and emoji.
       // The chess server owns the rating; this changes only the authenticated player's display name.
-      const nickname=String(b.nickname||'').trim().replace(/\s+/g,' ');
+      const nickname=safeNick(String(b.nickname||'').trim().replace(/\s+/g,' '));
       if(!nickname||Array.from(nickname).length>48||/[\u0000-\u001f\u007f<>]/u.test(nickname))return reply(res,400,{error:'Ник Messenger должен быть от 1 до 48 символов'});
       await command('HSET',key('nicknames'),id,nickname);
       return reply(res,200,{ok:true,nickname});
@@ -195,7 +216,7 @@ module.exports=async(req,res)=>{
     }
     if(action==='queue'){
       // Clients can only update their OWN nickname; rating and match result remain server-owned.
-      const displayName=String(b.nickname||'').trim().replace(/\s+/g,' ');
+      const displayName=safeNick(String(b.nickname||'').trim().replace(/\s+/g,' '));
       if(displayName&&Array.from(displayName).length<=48&&!/[\u0000-\u001f\u007f<>]/u.test(displayName))
         await command('HSET',key('nicknames'),id,displayName);
       const result=await lock('matchmaker',async()=>{

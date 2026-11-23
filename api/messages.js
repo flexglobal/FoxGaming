@@ -11,6 +11,20 @@ const ALLOWED = new Set(['text','hello','group-text','group-invite','group-joine
 const TTL = 600;
 const AUTH_TTL = 86400;
 const MAX_BODY = 260000;
+/* Анти-флуд (обычный человек не упрётся): до 900 сообщений в минуту с одного Mono ID,
+   до 600 ждущих доставки сообщений у одного получателя. Всё проверяется ОДНИМ Lua-запросом вместе с записью. */
+const SEND_PER_MIN = 900, QUEUE_MAX = 600, CHUNK_QUEUE_MAX = 48;
+const {reserved:reservedNick}=require('../lib/nick');
+const LUA_SEND = `
+local n=redis.call('INCR',KEYS[3]); if n==1 then redis.call('EXPIRE',KEYS[3],60) end
+if n>tonumber(ARGV[5]) then return 'rate' end
+local q=redis.call('ZCARD',KEYS[2])
+if q>=tonumber(ARGV[6]) or (ARGV[7]=='1' and q>=tonumber(ARGV[8])) then return 'busy' end
+if redis.call('HSETNX',KEYS[1],ARGV[1],ARGV[2])==0 then return 'dup' end
+redis.call('ZADD',KEYS[2],tonumber(ARGV[3]),ARGV[1])
+redis.call('EXPIRE',KEYS[1],tonumber(ARGV[4]))
+redis.call('EXPIRE',KEYS[2],tonumber(ARGV[4]))
+return 'ok'`;
 const HEADERS = {
   'Access-Control-Allow-Origin':'*',
   'Access-Control-Allow-Methods':'GET,POST,OPTIONS',
@@ -199,20 +213,16 @@ module.exports=async function handler(req,res){
           if(!Number(await cmd('SISMEMBER','mono:wal:v1:shop:own:'+from,item)))return response(res,403,{error:'Этот набор смайлов не куплен',code:'emoji_not_owned',item});
         }
       }
-      if(body.payload.type==='blob-chunk' && Number(await cmd('ZCARD',idx(to)))>=48){
-        res.setHeader('Retry-After','1');
-        return response(res,429,{error:'Recipient queue is busy',retryable:true});
-      }
+      // Чужие «Mono», «Админ», «Поддержка» и т. п. заменяются на нейтральный ник — выдать себя за администрацию нельзя.
+      if(body.payload.profile&&reservedNick(body.payload.profile.nick))body.payload.profile.nick='Пользователь Mono';
       const messageId=MESSAGE_ID.test(body.id)?body.id:randomUUID().replace(/-/g,'');
       const envelope=JSON.stringify({id:messageId,from,to,createdAt:Date.now(),payload:body.payload});
       if(envelope.length>MAX_BODY)return response(res,413,{error:'Message chunk is too large'});
       const time=Date.now();
-      await batch([
-        ['HSET',dataKey(to),messageId,envelope],
-        ['ZADD',idx(to),time,messageId],
-        ['EXPIRE',dataKey(to),TTL],
-        ['EXPIRE',idx(to),TTL]
-      ]);
+      // Атомарно: лимит отправителя, переполнение очереди получателя, запрет перезаписи чужого сообщения с тем же id.
+      const st=await cmd('EVAL',LUA_SEND,3,dataKey(to),idx(to),'mono:r3:rl:send:'+from,messageId,envelope,String(time),String(TTL),String(SEND_PER_MIN),String(QUEUE_MAX),body.payload.type==='blob-chunk'?'1':'0',String(CHUNK_QUEUE_MAX));
+      if(st==='busy'||st==='rate'){res.setHeader('Retry-After',st==='rate'?'10':'1');return response(res,429,{error:st==='rate'?'Too many messages, slow down':'Recipient queue is busy',retryable:true})}
+      // dup: сообщение с этим id уже в очереди (повтор после сбоя сети) — не перезаписываем, просто подтверждаем.
       return response(res,202,{ok:true,id:messageId,queuedForSeconds:TTL});
     }
     return response(res,400,{error:'Unknown action'});

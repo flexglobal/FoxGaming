@@ -2,6 +2,7 @@
 // Public, opt-in Mono Messenger profiles. No private chat history stored here.
 const {authenticate,denyBody}=require('../lib/auth');
 const {verifiedBadges}=require('../lib/badges');
+const {safeNick}=require('../lib/nick');
 const ID=/^MONO-[A-F0-9]{20}$/;
 const USERNAME=/^[a-z0-9_]{3,32}$/;
 const KEY=id=>'mono:public-profile:v1:'+id;
@@ -24,7 +25,7 @@ function validate(input){
  if(username&&!USERNAME.test(username))return null;
  const links=(Array.isArray(input.links)?input.links:[]).slice(0,5).filter(o=>o&&typeof o.url==='string'&&/^https:\/\//i.test(o.url)&&o.url.length<350).map(o=>({type:clean(o.type,25),url:o.url}));
  const langs=(Array.isArray(input.languages)?input.languages:[]).slice(0,5).map(x=>clean(x,22)).filter(Boolean);
- return {username,nick:clean(input.nick,64)||'Пользователь Mono',bio:clean(input.bio,400),avatar:image(input.avatar,120000),cover:image(input.cover,190000),country:country(input.country),languages:langs,links,achievements:(Array.isArray(input.achievements)?input.achievements:[]).filter(id=>badges.has(id)).slice(0,17)};
+ return {username,nick:safeNick(clean(input.nick,64))||'Пользователь Mono',bio:clean(input.bio,400),avatar:image(input.avatar,120000),cover:image(input.cover,190000),country:country(input.country),languages:langs,links,achievements:(Array.isArray(input.achievements)?input.achievements:[]).filter(id=>badges.has(id)).slice(0,17)};
 }
 const authorized=(req,id)=>authenticate(req,id);
 const activity=async id=>{try{const raw=await cmd('GET','mono:activity:v1:'+id);return raw?JSON.parse(raw):null}catch(_){return null}};
@@ -60,6 +61,8 @@ module.exports=async(req,res)=>{
   const id=clean(b?.id,26).toUpperCase();if(!ID.test(id))return res.status(400).json({error:'Invalid Mono ID'});
   if(!(await authorized(req,id)))return res.status(403).json(denyBody(req,{error:'Invalid identity'}));
   const profile=validate(b.profile);if(!profile)return res.status(400).json({error:'Invalid profile'});
+  // Не чаще одной записи профиля в 1,5 с на аккаунт (профиль с картинками ~300 КБ — защита базы от забивания).
+  if(await cmd('SET','mono:public-profile:v1:rl:'+id,'1','NX','PX',1500)!=='OK'){res.setHeader('Retry-After','2');return res.status(429).json({error:'Too many profile updates',retryable:true})}
   if(profile.country==='unknown'){
    const chessCountry=await cmd('HGET','mono:chess:v1:countries',id);
    if(/^[A-Z]{2}$/.test(chessCountry||''))profile.country=chessCountry;

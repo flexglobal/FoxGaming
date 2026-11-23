@@ -5,7 +5,9 @@
    • каждая операция требует одноразовый ключ идемпотентности: повтор/дубль запроса возвращает прежний результат и ничего не меняет;
    • подарок — запись с серверным uid в инвентаре одного владельца; продать/получить деньги за него можно ровно один раз;
    • цены, награды уровней и 70 % возврата определяет сервер; клиентские числа игнорируются;
-   • лимиты: 60 отправок/час на аккаунт, 60 наград/сутки на IP, не более 500 подарков в инвентаре.
+   • лимиты: 60 отправок/час на аккаунт, 60 наград/сутки на IP, не более 500 подарков в инвентаре;
+   • анти-ферма: подарок от аккаунта моложе 3 суток (на момент отправки) остаётся у получателя, но не продаётся —
+     так нельзя наплодить новые Mono ID, собрать с них награды за уровни и «слить» серебро на основной аккаунт.
    POST { id, action, key?, ... } → { ok, balance, ... }
    Действия: state, claim-level {level}, send-gift {to, gift}, sell-gift {uid}. */
 const crypto=require('node:crypto');
@@ -21,6 +23,7 @@ const GOLD=id=>P+'gold:'+id;
 const SHOP_OWN=id=>P+'shop:own:'+id, SHOP_EQ=id=>P+'shop:eq:'+id;
 const KEY=/^[A-Za-z0-9_-]{16,64}$/;
 const MAX_INV=500, SEND_PER_HOUR=60, CLAIMS_PER_IP_DAY=60, MIN_ACCOUNT_AGE_MS=20000, GONE_TTL=30*86400, LED_MAX=100;
+const SELLABLE_SENDER_AGE_MS=3*86400000; // подарок продаётся, только если отправителю было ≥ 3 суток
 const err=(res,status,error,extra)=>res.status(status).json({error,...extra});
 
 /* ---- Lua ---- */
@@ -45,7 +48,7 @@ local price=tonumber(ARGV[1])
 local bal=tonumber(redis.call('GET',KEYS[2])) or 0
 if bal<price then return cjson.encode({ok=false,error='funds',balance=bal}) end
 local nb=redis.call('DECRBY',KEYS[2],price)
-local gift={uid=ARGV[2],type=ARGV[5],from=ARGV[3],price=price,sentAt=tonumber(ARGV[6])}
+local gift={uid=ARGV[2],type=ARGV[5],from=ARGV[3],price=price,sentAt=tonumber(ARGV[6]),sa=tonumber(ARGV[9])}
 redis.call('HSET',KEYS[3],ARGV[2],cjson.encode(gift))
 redis.call('LPUSH',KEYS[4],cjson.encode({t='gift-out',a=-price,ts=tonumber(ARGV[6]),ref=ARGV[5],to=ARGV[4]}))
 redis.call('LTRIM',KEYS[4],0,99)
@@ -62,6 +65,7 @@ local g=cjson.decode(raw)
 local now=tonumber(ARGV[2])
 local unlock=g.sentAt+tonumber(ARGV[3])
 if now<unlock then return cjson.encode({ok=false,error='early',unlockAt=unlock,balance=tonumber(redis.call('GET',KEYS[3])) or 0}) end
+if g.sa and (g.sentAt-g.sa)<tonumber(ARGV[6]) then return cjson.encode({ok=false,error='young',balance=tonumber(redis.call('GET',KEYS[3])) or 0}) end
 local refund=math.floor(g.price*tonumber(ARGV[4])/100)
 redis.call('HDEL',KEYS[2],ARGV[1])
 local nb=redis.call('INCRBY',KEYS[3],refund)
@@ -93,7 +97,7 @@ async function stateOf(id){
   const [bal,claimed,inv,gone,led,own,eqRaw,gold,cfg]=await Promise.all([
     cmd('GET',BAL(id)),cmd('HKEYS',CLAIMED(id)),cmd('HGETALL',INV(id)),cmd('HKEYS',GONE(id)),cmd('LRANGE',LED(id),0,19),cmd('SMEMBERS',SHOP_OWN(id)),cmd('HGETALL',SHOP_EQ(id)),cmd('GET',GOLD(id)),shopPublic()]);
   const gifts=[];
-  for(let i=0;i+1<(inv||[]).length;i+=2){const g=parse(inv[i+1]);if(g&&g.uid&&GIFTS[g.type])gifts.push({uid:g.uid,type:g.type,from:g.from,price:g.price,sentAt:g.sentAt})}
+  for(let i=0;i+1<(inv||[]).length;i+=2){const g=parse(inv[i+1]);if(g&&g.uid&&GIFTS[g.type])gifts.push({uid:g.uid,type:g.type,from:g.from,price:g.price,sentAt:g.sentAt,sellable:!(g.sa&&g.sentAt-g.sa<SELLABLE_SENDER_AGE_MS)})}
   gifts.sort((a,b)=>b.sentAt-a.sentAt);
   const owned=[...new Set([...Object.keys(SHOP_ITEMS).filter(k=>!SHOP_ITEMS[k].price),...(own||[]).filter(k=>SHOP_ITEMS[k])])];
   const eq={...SHOP_DEFAULT_EQ};for(let i=0;i+1<(eqRaw||[]).length;i+=2){const it=SHOP_ITEMS[eqRaw[i+1]];if(it&&it.cat===eqRaw[i]&&owned.includes(eqRaw[i+1]))eq[eqRaw[i]]=eqRaw[i+1]}
@@ -149,8 +153,9 @@ module.exports=async function handler(req,res){
       if(!ID.test(to)||to===id)return err(res,400,'Укажи другого пользователя Mono');
       const gift=GIFTS[type];if(!gift)return err(res,400,'Неизвестный подарок');
       const uid=crypto.randomBytes(12).toString('hex');
+      const senderCreated=Number(await cmd('HGET',CREATED,id))||now; // дата регистрации ставит сервер, клиент её не меняет
       const out=parse(await cmd('EVAL',LUA_SEND,7,IDEM(id,key),BAL(id),INV(to),LED(id),RATE(id),OWNER(to),LED(to),
-        String(gift.price),uid,id,to,type,String(now),String(SEND_PER_HOUR),String(MAX_INV)));
+        String(gift.price),uid,id,to,type,String(now),String(SEND_PER_HOUR),String(MAX_INV),String(senderCreated)));
       if(!out)return err(res,500,'Ошибка кошелька');
       const map={funds:402,rate:429,norecipient:404,inventory_full:409};
       return res.status(out.ok?200:(map[out.error]||400)).json(out.ok?out:{...out,error:({funds:'Недостаточно серебряных монет',rate:'Слишком много подарков за час',norecipient:'Получатель ещё не зарегистрирован в Mono',inventory_full:'У получателя переполнен инвентарь'})[out.error]||out.error,code:out.error});
@@ -166,9 +171,10 @@ module.exports=async function handler(req,res){
     }
     if(action==='sell-gift'){
       const uid=String(body.uid||'');if(!/^[a-f0-9]{24}$/.test(uid))return err(res,400,'Неверный подарок');
-      const out=parse(await cmd('EVAL',LUA_SELL,5,IDEM(id,key),INV(id),BAL(id),LED(id),GONE(id),uid,String(now),String(SELL_HOLD_MS),String(SELL_PERCENT),String(GONE_TTL)));
+      const out=parse(await cmd('EVAL',LUA_SELL,5,IDEM(id,key),INV(id),BAL(id),LED(id),GONE(id),uid,String(now),String(SELL_HOLD_MS),String(SELL_PERCENT),String(GONE_TTL),String(SELLABLE_SENDER_AGE_MS)));
       if(!out)return err(res,500,'Ошибка кошелька');
-      return res.status(out.ok?200:(out.error==='early'?425:410)).json(out.ok?out:{...out,error:out.error==='early'?'Подарок можно продать через 3 дня после получения':'Подарок уже продан или не принадлежит тебе',code:out.error});
+      const msg={early:'Подарок можно продать через 3 дня после получения',young:'Этот подарок нельзя продать: его отправил аккаунт, которому было меньше 3 дней. Подарок остаётся у тебя'};
+      return res.status(out.ok?200:(out.error==='early'?425:out.error==='young'?403:410)).json(out.ok?out:{...out,error:msg[out.error]||'Подарок уже продан или не принадлежит тебе',code:out.error});
     }
     return err(res,400,'Unknown action');
   }catch(e){return err(res,500,'Wallet error')}

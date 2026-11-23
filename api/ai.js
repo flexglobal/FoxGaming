@@ -153,7 +153,7 @@ module.exports = async function handler(req, res) {
       const { r, model } = await callModel(token, [{ role: 'user', content: 'Ответь одним словом: работает?' }], false, 20);
       const j = await r.json();
       return res.status(200).json({ ok: true, model, reply: j?.choices?.[0]?.message?.content || '' });
-    } catch (e) { return res.status(502).json({ ok: false, code: 'gateway', detail: e.detail || String(e.message || e) }); }
+    } catch (e) { console.error('[ai probe]', e.detail?.status || e.message); return res.status(502).json({ ok: false, code: 'gateway', status: e.detail?.status || 0 }); }
   }
   if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
