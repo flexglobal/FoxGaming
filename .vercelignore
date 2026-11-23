@@ -1,0 +1,15 @@
+# Эти файлы не нужны сайту и не должны раздаваться публично.
+# Функциям из api/ нужны только api/ и lib/*.js — их не трогаем.
+*.rdb
+.env
+.env.*
+tests/
+tools/
+dev-server.cjs
+check-public-api.cjs
+/health.js
+/news.js
+/signal.js
+lib/admin-page.html
+lib/admin-medals.json
+README.md
