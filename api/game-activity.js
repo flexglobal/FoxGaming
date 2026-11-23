@@ -2,9 +2,9 @@
 /* «Играет в»: серверный статус активной полноэкранной игры. Информационный, НЕ основание для наград/ELO/доступа.
    POST {monoId, activity:{gameId,details,iconPng,startedAt}|null}, заголовок X-Mono-Token.
    Название берётся из каталога сервера; пути, PID и заголовки окон не принимаются. Статус живёт 12 минут. */
-const {cmd}=require('../lib/redis');
-const {authenticate,denyBody,ID}=require('../lib/auth');
-const {GAMES,isGame}=require('../lib/game-catalog');
+const {cmd}=require('./_lib/redis');
+const {authenticate,denyBody,ID}=require('./_lib/auth');
+const {GAMES,isGame}=require('./_lib/game-catalog');
 const HDR={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,X-Mono-Token','Cache-Control':'no-store','Content-Type':'application/json; charset=utf-8','X-Content-Type-Options':'nosniff'};
 const KEY=id=>'mono:activity:v1:'+id;
 const LIMIT=id=>'mono:activity:v1:rl:'+id;

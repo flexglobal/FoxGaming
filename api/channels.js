@@ -5,8 +5,8 @@
    Действия: create, mine, get, search, subscribe, unsubscribe, post, delete-post, like, comments, comment,
              delete-comment, update, add-admin, remove-admin, delete. */
 const crypto=require('node:crypto');
-const {cmd,batch}=require('../lib/redis');
-const {authenticate,denyBody,ID}=require('../lib/auth');
+const {cmd,batch}=require('./_lib/redis');
+const {authenticate,denyBody,ID}=require('./_lib/auth');
 const HDR={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,X-Mono-Token','Cache-Control':'no-store','Content-Type':'application/json; charset=utf-8','X-Content-Type-Options':'nosniff'};
 const P='mono:chan:v1:';
 const META=c=>P+'c:'+c, POSTS=c=>P+'posts:'+c, POSTH=c=>P+'post:'+c, SUBS=c=>P+'subs:'+c, MY=id=>P+'my:'+id;

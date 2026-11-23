@@ -1,9 +1,9 @@
 'use strict';
 /* Mono temporary delivery relay v3. No message database and no durable chat history.
    Envelopes live in Redis for at most 300 seconds, or until acknowledged. */
-const {SHOP_ITEMS}=require('../lib/shop');
+const {SHOP_ITEMS}=require('./_lib/shop');
 const {randomUUID,createHash} = require('node:crypto');
-const banLib = require('../lib/ban');
+const banLib = require('./_lib/ban');
 const deny = (req,res) => res.status(403).json(req.monoBan ? banLib.payload(req.monoBan) : {error:'Wrong installation key'});
 const ID = /^MONO-[A-F0-9]{20}$/;
 const MESSAGE_ID = /^[a-zA-Z0-9_-]{10,80}$/;
@@ -14,7 +14,7 @@ const MAX_BODY = 260000;
 /* Анти-флуд (обычный человек не упрётся): до 900 сообщений в минуту с одного Mono ID,
    до 600 ждущих доставки сообщений у одного получателя. Всё проверяется ОДНИМ Lua-запросом вместе с записью. */
 const SEND_PER_MIN = 900, QUEUE_MAX = 600, CHUNK_QUEUE_MAX = 48;
-const {reserved:reservedNick}=require('../lib/nick');
+const {reserved:reservedNick}=require('./_lib/nick');
 const LUA_SEND = `
 local n=redis.call('INCR',KEYS[3]); if n==1 then redis.call('EXPIRE',KEYS[3],60) end
 if n>tonumber(ARGV[5]) then return 'rate' end

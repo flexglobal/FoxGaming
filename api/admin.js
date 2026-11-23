@@ -13,11 +13,11 @@
    Прежний API (заголовок X-Mono-Admin = MONO_ADMIN_TOKEN, поля action/id) работает как раньше:
      grant / revoke (role — любая медаль), set-vip (id, days), set-created (id, at), show (id). */
 const crypto=require('node:crypto');
-const {cmd,batch}=require('../lib/redis');
-const {ID,CREATED}=require('../lib/auth');
-const {ROLES,VIP,MANUAL,ALL,verifiedBadges}=require('../lib/badges');
-const banLib=require('../lib/ban');
-const PAGE=require('../lib/admin-page');
+const {cmd,batch}=require('./_lib/redis');
+const {ID,CREATED}=require('./_lib/auth');
+const {ROLES,VIP,MANUAL,ALL,verifiedBadges}=require('./_lib/badges');
+const banLib=require('./_lib/ban');
+const PAGE=require('./_lib/admin-page');
 
 const A='mono:adm:v1:';
 const SESS=hx=>A+'sess:'+hx, CUR=n=>A+'cur:'+n, FAIL_IP=ip=>A+'fail:ip:'+ip, FAIL_ALL=A+'fail:all';
@@ -27,7 +27,7 @@ const RATINGS='mono:chess:v1:ratings', RATINGS_BACKUP='mono:chess:v1:ratings:bac
 const NICKS='mono:chess:v1:nicknames', COUNTRIES='mono:chess:v1:countries', NAMES='mono:public-profile:v1:usernames';
 const PROFILE=id=>'mono:public-profile:v1:'+id;
 const GOLD=id=>'mono:wal:v1:gold:'+id;
-const shopLib=require('../lib/shop');
+const shopLib=require('./_lib/shop');
 const BAL=id=>'mono:wal:v1:bal:'+id, LED=id=>'mono:wal:v1:led:'+id, INV=id=>'mono:wal:v1:inv:'+id, CLAIMED=id=>'mono:wal:v1:claimed:'+id;
 const ONLINE=id=>'mono:r3:online:'+id;
 const MAX_FAIL_IP=5, MAX_FAIL_ALL=40, LOCK_SEC=900, SESSION_IDLE=7200, SESSION_ABS=12*3600*1000, PAGE_SIZE=40;

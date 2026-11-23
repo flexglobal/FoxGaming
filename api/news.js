@@ -2,9 +2,9 @@
 /* News are publisher-approved announcements, not chat messages.
    Configured with MONO_NEWS_ADMIN_TOKEN in Vercel env, never in browser source. */
 const crypto=require('node:crypto');
-const {authenticate,denyBody,ID}=require('../lib/auth');
-const lib=require('../lib/redis');
-const banLib=require('../lib/ban');
+const {authenticate,denyBody,ID}=require('./_lib/auth');
+const lib=require('./_lib/redis');
+const banLib=require('./_lib/ban');
 const KEY='mono:official:news:v2';
 /* Баг-репорты через бота «Mono» в мессенджере (/bug текст). Лимиты проверяет СЕРВЕР: 3 отчёта за 24 часа с аккаунта, до 1000 слов в каждом. */
 const BUG_LIMIT=3,BUG_WINDOW=86400,BUG_MAX_WORDS=1000,BUG_MAX_CHARS=12000,BUG_KEEP=1000;

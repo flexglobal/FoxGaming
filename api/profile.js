@@ -1,8 +1,8 @@
 'use strict';
 // Public, opt-in Mono Messenger profiles. No private chat history stored here.
-const {authenticate,denyBody}=require('../lib/auth');
-const {verifiedBadges}=require('../lib/badges');
-const {safeNick}=require('../lib/nick');
+const {authenticate,denyBody}=require('./_lib/auth');
+const {verifiedBadges}=require('./_lib/badges');
+const {safeNick}=require('./_lib/nick');
 const ID=/^MONO-[A-F0-9]{20}$/;
 const USERNAME=/^[a-z0-9_]{3,32}$/;
 const KEY=id=>'mono:public-profile:v1:'+id;

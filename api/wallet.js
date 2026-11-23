@@ -11,10 +11,10 @@
    POST { id, action, key?, ... } → { ok, balance, ... }
    Действия: state, claim-level {level}, send-gift {to, gift}, sell-gift {uid}. */
 const crypto=require('node:crypto');
-const {cmd,batch}=require('../lib/redis');
-const {authenticate,denyBody,ID,OWNER,CREATED}=require('../lib/auth');
-const {GIFTS,LEVEL_SILVER,SELL_HOLD_MS,SELL_PERCENT}=require('../lib/gifts');
-const {SHOP_ITEMS,SHOP_DEFAULT_EQ,shopCatalog,shopPublic}=require('../lib/shop');
+const {cmd,batch}=require('./_lib/redis');
+const {authenticate,denyBody,ID,OWNER,CREATED}=require('./_lib/auth');
+const {GIFTS,LEVEL_SILVER,SELL_HOLD_MS,SELL_PERCENT}=require('./_lib/gifts');
+const {SHOP_ITEMS,SHOP_DEFAULT_EQ,shopCatalog,shopPublic}=require('./_lib/shop');
 const HDR={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,X-Mono-Token','Cache-Control':'no-store','Content-Type':'application/json; charset=utf-8','X-Content-Type-Options':'nosniff'};
 const P='mono:wal:v1:';
 const BAL=id=>P+'bal:'+id, CLAIMED=id=>P+'claimed:'+id, INV=id=>P+'inv:'+id, GONE=id=>P+'gone:'+id, LED=id=>P+'led:'+id;

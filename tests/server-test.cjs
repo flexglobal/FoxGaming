@@ -17,7 +17,7 @@ function invoke(handler,{method='POST',body=null,query={},headers={}}){
   process.env.MONO_ADMIN_TOKEN='admin-token-'+hex(30);
   await proxy.run(['FLUSHALL']);
   const messages=require('../api/messages'),profile=require('../api/profile'),chess=require('../api/chess'),channels=require('../api/channels'),activity=require('../api/game-activity'),admin=require('../api/admin'),wallet=require('../api/wallet');
-  const C=require('../lib/chess-engine');
+  const C=require('../api/_lib/chess-engine');
   const H=u=>({'x-mono-token':u.token});
   const as=(h,u,body,method='POST',query={})=>invoke(h,{method,body:{id:u.id,...body},query,headers:H(u)});
   let passed=0;const t=async(name,fn)=>{try{await fn();passed++;console.log('ok  ',name)}catch(e){console.log('FAIL',name,'\n    ',e.message.split('\n').slice(0,4).join('\n     '));process.exitCode=1}};

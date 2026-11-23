@@ -5,8 +5,8 @@
    Защита бюджета: лимиты на IP в час/сутки и общий суточный лимит (AI_DAILY_LIMIT).
    Этот же файл отдаёт /api/health (rewrite в vercel.json) — на Hobby не больше 12 функций. */
 const crypto = require('node:crypto');
-const { batch } = require('../lib/redis');
-const health = require('../lib/health');
+const { batch } = require('./_lib/redis');
+const health = require('./_lib/health');
 
 /* По умолчанию — Vercel AI Gateway. Можно подключить любой OpenAI-совместимый сервис:
    AI_BASE_URL (…/chat/completions) + AI_API_KEY + AI_MODELS (например, Groq или Google AI Studio). */

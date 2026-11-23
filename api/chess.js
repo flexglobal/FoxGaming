@@ -2,7 +2,7 @@
 /* Authoritative chess service for Mono. Clients never submit FEN, time or ELO.
    Requires same installation identity + Upstash credentials as Messenger. */
 const crypto=require('node:crypto');
-const C=require('../lib/chess-engine');
+const C=require('./_lib/chess-engine');
 const ID=/^MONO-[A-F0-9]{20}$/;
 const ROOM=/^MC-[A-F0-9]{24}$/;
 const PREFIX='mono:chess:v1:';
@@ -29,8 +29,8 @@ const reply=(res,status,value)=>res.status(status).json(value);
 const clean=id=>String(id||'').trim().toUpperCase();
 // Единая проверка (lib/auth): закрепляет владельца Mono ID навсегда и САМА создаёт сессию, если ключ мессенджера
 // истёк. Раньше после 24 ч без мессенджера шахматы отвечали «Проверка Mono ID не пройдена».
-const {authenticate,denyBody}=require('../lib/auth');
-const {safeNick}=require('../lib/nick');
+const {authenticate,denyBody}=require('./_lib/auth');
+const {safeNick}=require('./_lib/nick');
 const auth=(req,id)=>authenticate(req,id);
 async function lock(name,task){
   const lk=key('lock:'+name),token=crypto.randomBytes(12).toString('hex');
